@@ -1,0 +1,238 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --grainient-amber: rgba(205, 158, 106, 0.2);
+  --grainient-sky: rgba(120, 147, 176, 0.17);
+  --grainient-mint: rgba(129, 157, 137, 0.16);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: #0f172a;
+  background: #fcfaf6;
+  font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-1 rounded-full px-3 py-2 text-sm font-semibold transition;
+    @apply disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply bg-slate-900 text-white hover:bg-slate-800;
+  }
+
+  .btn-soft {
+    @apply bg-slate-100 text-slate-700 hover:bg-slate-200;
+  }
+
+  .btn-ghost {
+    @apply border border-slate-200 bg-white text-slate-700 hover:bg-slate-50;
+  }
+
+  .btn-danger {
+    @apply bg-rose-100 text-rose-700 hover:bg-rose-200;
+  }
+
+  .input {
+    @apply w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm;
+    @apply focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200;
+  }
+
+  .textarea {
+    @apply w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm;
+    @apply focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200;
+  }
+
+  .notes-paper {
+    /* Canvas draws the ruled lines; CSS here just locks spacing for predictable metrics. */
+    line-height: 1.75rem;
+  }
+
+  .font-outfit {
+    font-family: "Outfit", "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-weight: 400;
+  }
+
+  .pill {
+    @apply rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700;
+  }
+}
+
+@layer utilities {
+  @keyframes grainient-pan {
+    0% {
+      transform: scale(1.02) translate3d(-1%, -1%, 0);
+    }
+    100% {
+      transform: scale(1.06) translate3d(1.5%, 1%, 0);
+    }
+  }
+
+  @keyframes grainient-float-a {
+    0% {
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+    50% {
+      transform: translate3d(10%, 10%, 0) scale(1.06);
+    }
+    100% {
+      transform: translate3d(-8%, 14%, 0) scale(0.98);
+    }
+  }
+
+  @keyframes grainient-float-b {
+    0% {
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+    50% {
+      transform: translate3d(-11%, 12%, 0) scale(1.05);
+    }
+    100% {
+      transform: translate3d(7%, -5%, 0) scale(0.97);
+    }
+  }
+
+  @keyframes grainient-float-c {
+    0% {
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+    50% {
+      transform: translate3d(7%, -8%, 0) scale(1.04);
+    }
+    100% {
+      transform: translate3d(-9%, 6%, 0) scale(0.96);
+    }
+  }
+
+  @keyframes grainient-drift {
+    0% {
+      transform: translate3d(0, 0, 0);
+    }
+    100% {
+      transform: translate3d(-6%, -4%, 0);
+    }
+  }
+
+  .grainient-shell {
+    isolation: isolate;
+  }
+
+  .grainient-base {
+    position: absolute;
+    inset: -12%;
+    background:
+      radial-gradient(
+        44% 36% at 15% 14%,
+        var(--grainient-amber),
+        rgba(251, 191, 36, 0) 72%
+      ),
+      radial-gradient(
+        46% 40% at 86% 16%,
+        var(--grainient-sky),
+        rgba(56, 189, 248, 0) 72%
+      ),
+      radial-gradient(
+        46% 46% at 52% 88%,
+        var(--grainient-mint),
+        rgba(52, 211, 153, 0) 75%
+      ),
+      linear-gradient(130deg, #fdfaf5 0%, #f2f6f2 54%, #edf3f8 100%);
+    filter: saturate(0.9);
+    animation: grainient-pan 24s ease-in-out infinite alternate;
+  }
+
+  .grainient-blob {
+    position: absolute;
+    width: 54vmax;
+    height: 54vmax;
+    border-radius: 9999px;
+    filter: blur(108px);
+    mix-blend-mode: soft-light;
+    opacity: 0.28;
+  }
+
+  .grainient-blob-a {
+    left: -18%;
+    top: -20%;
+    background: rgba(196, 147, 101, 0.3);
+    animation: grainient-float-a 22s ease-in-out infinite alternate;
+  }
+
+  .grainient-blob-b {
+    right: -20%;
+    top: -14%;
+    background: rgba(112, 142, 176, 0.3);
+    animation: grainient-float-b 26s ease-in-out infinite alternate;
+  }
+
+  .grainient-blob-c {
+    bottom: -32%;
+    left: 24%;
+    background: rgba(124, 157, 136, 0.26);
+    animation: grainient-float-c 28s ease-in-out infinite alternate;
+  }
+
+  .grainient-noise {
+    position: absolute;
+    inset: -100%;
+    opacity: 0.08;
+    mix-blend-mode: soft-light;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%27180%27 height=%27180%27 viewBox=%270 0 180 180%27%3E%3Cfilter id=%27n%27%3E%3CfeTurbulence type=%27fractalNoise%27 baseFrequency=%270.75%27 numOctaves=%273%27 stitchTiles=%27stitch%27/%3E%3C/filter%3E%3Crect width=%27100%25%27 height=%27100%25%27 filter=%27url(%23n)%27/%3E%3C/svg%3E");
+    animation: grainient-drift 16s steps(10, end) infinite;
+  }
+
+  @keyframes tp-enter {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .tp-enter {
+    /* backwards prevents a flash before animation starts, without freezing the end state
+       (so hover transforms still work after the animation completes). */
+    animation: tp-enter 520ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+
+  .tp-enter-1 {
+    animation-delay: 0ms;
+  }
+
+  .tp-enter-2 {
+    animation-delay: 120ms;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .grainient-base,
+    .grainient-blob-a,
+    .grainient-blob-b,
+    .grainient-blob-c,
+    .grainient-noise,
+    .tp-enter,
+    .tp-enter-1,
+    .tp-enter-2 {
+      animation: none !important;
+      transform: none !important;
+    }
+  }
+}
