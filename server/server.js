@@ -20,7 +20,7 @@ mongoose
 app.use("/api/workspaces", workspaceRoutes);
 
 app.get("/", (req, res) => {
-  res.send("./routes/workspaceRoutes");
+  res.send("server is running");
 });
 
 const PORT = 5000;
