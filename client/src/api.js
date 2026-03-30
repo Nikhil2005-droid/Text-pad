@@ -1,119 +1,106 @@
-const API = "http://localhost:5000/api/workspaces";
+const API = (import.meta.env.VITE_API_URL || "/api/workspaces").replace(/\/$/, "");
 
-export const openWorkspaceAPI = (workspaceId) =>
+function withWorkspaceToken(headers = {}, accessToken) {
+  if (!accessToken) return headers;
+  return {
+    ...headers,
+    "x-workspace-token": accessToken,
+  };
+}
+
+async function parseApiResponse(res, fallbackMessage) {
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    const error = new Error(data?.message || fallbackMessage);
+    error.requiresPassword = Boolean(data?.requiresPassword);
+    error.status = res.status;
+    throw error;
+  }
+  return data;
+}
+
+export const openWorkspaceAPI = (workspaceId, password = "") =>
   fetch(`${API}/open`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ workspaceId }),
-  }).then(async (res) => {
-    const data = await res.json().catch(() => null);
-    if (!res.ok) {
-      throw new Error(data?.message || "Failed to open workspace");
-    }
-    return data;
-  });
+    body: JSON.stringify({ workspaceId, password }),
+  }).then((res) => parseApiResponse(res, "Failed to open workspace"));
 
-export const fetchWorkspaceAPI = (workspaceId) =>
-  fetch(`${API}/${workspaceId}`).then(async (res) => {
-    const data = await res.json().catch(() => null);
-    if (!res.ok) {
-      throw new Error(data?.message || "Failed to fetch workspace");
-    }
-    return data;
-  });
+export const fetchWorkspaceAPI = (workspaceId, accessToken) =>
+  fetch(`${API}/${workspaceId}`, {
+    headers: withWorkspaceToken({}, accessToken),
+  }).then((res) => parseApiResponse(res, "Failed to fetch workspace"));
 
-export const updateWorkspaceAPI = (workspaceId, patch) =>
+export const updateWorkspaceAPI = (workspaceId, patch, accessToken) =>
   fetch(`${API}/${workspaceId}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: withWorkspaceToken(
+      { "Content-Type": "application/json" },
+      accessToken
+    ),
     body: JSON.stringify(patch),
-  }).then(async (res) => {
-    const data = await res.json().catch(() => null);
-    if (!res.ok) {
-      throw new Error(data?.message || "Failed to update workspace");
-    }
-    return data;
-  });
+  }).then((res) => parseApiResponse(res, "Failed to update workspace"));
 
-export const createNoteAPI = (workspaceId, note = {}) =>
+export const createNoteAPI = (workspaceId, note = {}, accessToken) =>
   fetch(`${API}/${workspaceId}/notes`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: withWorkspaceToken(
+      { "Content-Type": "application/json" },
+      accessToken
+    ),
     body: JSON.stringify({
       title: note.title ?? "New Note",
       content: note.content ?? "",
     }),
-  }).then(async (res) => {
-    const data = await res.json().catch(() => null);
-    if (!res.ok) {
-      throw new Error(data?.message || "Failed to create note");
-    }
-    return data;
-  });
+  }).then((res) => parseApiResponse(res, "Failed to create note"));
 
-export const updateNoteAPI = (workspaceId, noteId, data) =>
+export const updateNoteAPI = (workspaceId, noteId, data, accessToken) =>
   fetch(`${API}/${workspaceId}/notes/${noteId}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: withWorkspaceToken(
+      { "Content-Type": "application/json" },
+      accessToken
+    ),
     body: JSON.stringify(data),
-  }).then(async (res) => {
-    const payload = await res.json().catch(() => null);
-    if (!res.ok) {
-      throw new Error(payload?.message || "Failed to update note");
-    }
-    return payload;
-  });
+  }).then((res) => parseApiResponse(res, "Failed to update note"));
 
-export const deleteNoteAPI = (workspaceId, noteId) =>
+export const deleteNoteAPI = (workspaceId, noteId, accessToken) =>
   fetch(`${API}/${workspaceId}/notes/${noteId}`, {
     method: "DELETE",
-  }).then(async (res) => {
-    const data = await res.json().catch(() => null);
-    if (!res.ok) {
-      throw new Error(data?.message || "Failed to delete note");
-    }
-    return data;
-  });
+    headers: withWorkspaceToken({}, accessToken),
+  }).then((res) => parseApiResponse(res, "Failed to delete note"));
 
-export const createCodeAPI = (workspaceId, entry = {}) =>
+export const createCodeAPI = (workspaceId, entry = {}, accessToken) =>
   fetch(`${API}/${workspaceId}/codes`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: withWorkspaceToken(
+      { "Content-Type": "application/json" },
+      accessToken
+    ),
     body: JSON.stringify({
       title: entry.title ?? "New Code",
       code: entry.code ?? "",
     }),
-  }).then(async (res) => {
-    const data = await res.json().catch(() => null);
-    if (!res.ok) {
-      throw new Error(data?.message || "Failed to create code");
-    }
-    return data;
-  });
+  }).then((res) => parseApiResponse(res, "Failed to create code"));
 
-export const updateCodeAPI = (workspaceId, codeId, data) =>
+export const updateCodeAPI = (workspaceId, codeId, data, accessToken) =>
   fetch(`${API}/${workspaceId}/codes/${codeId}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: withWorkspaceToken(
+      { "Content-Type": "application/json" },
+      accessToken
+    ),
     body: JSON.stringify(data),
-  }).then(async (res) => {
-    const payload = await res.json().catch(() => null);
-    if (!res.ok) {
-      throw new Error(payload?.message || "Failed to update code");
-    }
-    return payload;
-  });
+  }).then((res) => parseApiResponse(res, "Failed to update code"));
 
-export const deleteCodeAPI = (workspaceId, codeId) =>
+export const deleteCodeAPI = (workspaceId, codeId, accessToken) =>
   fetch(`${API}/${workspaceId}/codes/${codeId}`, {
     method: "DELETE",
-  }).then(async (res) => {
-    const data = await res.json().catch(() => null);
-    if (!res.ok) {
-      throw new Error(data?.message || "Failed to delete code");
-    }
-    return data;
-  });
+    headers: withWorkspaceToken({}, accessToken),
+  }).then((res) => parseApiResponse(res, "Failed to delete code"));
 
-export const deleteWorkspaceAPI = (workspaceId) =>
-  fetch(`${API}/${workspaceId}`, { method: "DELETE" });
+export const deleteWorkspaceAPI = (workspaceId, accessToken) =>
+  fetch(`${API}/${workspaceId}`, {
+    method: "DELETE",
+    headers: withWorkspaceToken({}, accessToken),
+  }).then((res) => parseApiResponse(res, "Failed to delete workspace"));

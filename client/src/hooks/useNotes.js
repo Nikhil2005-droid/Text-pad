@@ -10,7 +10,7 @@ import {
   updateNoteAPI,
 } from "../api";
 
-export function useNotes(workspace) {
+export function useNotes(workspace, workspaceAccessToken) {
   const workspaceId = workspace?.workspaceId;
 
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(false);
@@ -144,7 +144,7 @@ export function useNotes(workspace) {
     let isActive = true;
     const loadWorkspace = async () => {
       try {
-        const data = await fetchWorkspaceAPI(workspaceId);
+        const data = await fetchWorkspaceAPI(workspaceId, workspaceAccessToken);
         if (!isActive) return;
 
         const nextNotes = Array.isArray(data?.notes) ? data.notes : [];
@@ -193,7 +193,7 @@ export function useNotes(workspace) {
     return () => {
       isActive = false;
     };
-  }, [workspaceId]);
+  }, [workspaceAccessToken, workspaceId]);
 
   // Notes helpers
   const setNoteTitleValue = (value) => {
@@ -216,10 +216,15 @@ export function useNotes(workspace) {
 
     setNoteSaveStatus("saving");
     try {
-      const data = await updateNoteAPI(workspaceId, activeNoteId, {
-        title: noteTitle,
-        content: noteContent,
-      });
+      const data = await updateNoteAPI(
+        workspaceId,
+        activeNoteId,
+        {
+          title: noteTitle,
+          content: noteContent,
+        },
+        workspaceAccessToken
+      );
       setNotes(data);
 
       const updated = data.find((n) => n._id === activeNoteId);
@@ -256,7 +261,7 @@ export function useNotes(workspace) {
     if (!ok) return;
 
     try {
-      const data = await createNoteAPI(workspaceId);
+      const data = await createNoteAPI(workspaceId, {}, workspaceAccessToken);
       setNotes(data);
       const created = data[data.length - 1];
       if (created) {
@@ -313,10 +318,14 @@ export function useNotes(workspace) {
     if (!items || items.length === 0) return;
     try {
       for (const item of items) {
-        const data = await createNoteAPI(workspaceId, {
-          title: item.note.title,
-          content: item.note.content,
-        });
+        const data = await createNoteAPI(
+          workspaceId,
+          {
+            title: item.note.title,
+            content: item.note.content,
+          },
+          workspaceAccessToken
+        );
         setNotes(data);
         const created = data[data.length - 1];
         if (created && item.wasPinned) {
@@ -326,7 +335,7 @@ export function useNotes(workspace) {
         }
       }
       showToast(items.length === 1 ? "Note restored" : "Notes restored", "success");
-    } catch (error) {
+    } catch {
       showToast("Restore failed", "error");
     }
   };
@@ -340,10 +349,15 @@ export function useNotes(workspace) {
 
     const contentValue = noteId === activeNoteId ? noteContent : note.content ?? "";
     try {
-      const data = await updateNoteAPI(workspaceId, noteId, {
-        title: nextTitle ?? "",
-        content: contentValue,
-      });
+      const data = await updateNoteAPI(
+        workspaceId,
+        noteId,
+        {
+          title: nextTitle ?? "",
+          content: contentValue,
+        },
+        workspaceAccessToken
+      );
       setNotes(data);
       if (noteId === activeNoteId) {
         const updated = data.find((n) => n._id === noteId);
@@ -356,7 +370,7 @@ export function useNotes(workspace) {
         }
       }
       showToast("Title updated", "success");
-    } catch (error) {
+    } catch {
       showToast("Rename failed", "error");
     }
   };
@@ -390,7 +404,7 @@ export function useNotes(workspace) {
 
     try {
       for (const id of uniqueIds) {
-        await deleteNoteAPI(workspaceId, id);
+        await deleteNoteAPI(workspaceId, id, workspaceAccessToken);
       }
       deleteNotesFromState(uniqueIds);
 
@@ -399,7 +413,7 @@ export function useNotes(workspace) {
       showToast(message, "success", "Undo", async () => {
         await restoreNotes(restoreItems);
       });
-    } catch (error) {
+    } catch {
       showToast("Delete failed", "error");
     }
   };
@@ -429,10 +443,15 @@ export function useNotes(workspace) {
 
     setCodeSaveStatus("saving");
     try {
-      const data = await updateCodeAPI(workspaceId, activeCodeId, {
-        title: codeTitle,
-        code: codeText,
-      });
+      const data = await updateCodeAPI(
+        workspaceId,
+        activeCodeId,
+        {
+          title: codeTitle,
+          code: codeText,
+        },
+        workspaceAccessToken
+      );
       setCodes(data);
 
       const updated = data.find((c) => c._id === activeCodeId);
@@ -451,7 +470,7 @@ export function useNotes(workspace) {
       setCodeSaveStatus("saved");
       if (!silent) showToast("Saved code", "success");
       return true;
-    } catch (error) {
+    } catch {
       setCodeSaveStatus("error");
       // Even when autosaving silently, surface failures so the user isn't confused.
       showToast("Code save failed", "error");
@@ -469,7 +488,7 @@ export function useNotes(workspace) {
     if (!ok) return;
 
     try {
-      const data = await createCodeAPI(workspaceId);
+      const data = await createCodeAPI(workspaceId, {}, workspaceAccessToken);
       setCodes(data);
       const created = data[data.length - 1];
       if (created) {
@@ -481,7 +500,7 @@ export function useNotes(workspace) {
         setLastCodeSavedAt(created.updatedAt ?? created.createdAt ?? null);
       }
       showToast("Code created", "success");
-    } catch (error) {
+    } catch {
       showToast("Create code failed", "error");
     }
   };
@@ -526,10 +545,14 @@ export function useNotes(workspace) {
     if (!items || items.length === 0) return;
     try {
       for (const item of items) {
-        const data = await createCodeAPI(workspaceId, {
-          title: item.code.title,
-          code: item.code.code,
-        });
+        const data = await createCodeAPI(
+          workspaceId,
+          {
+            title: item.code.title,
+            code: item.code.code,
+          },
+          workspaceAccessToken
+        );
         setCodes(data);
         const created = data[data.length - 1];
         if (created && item.wasPinned) {
@@ -539,7 +562,7 @@ export function useNotes(workspace) {
         }
       }
       showToast(items.length === 1 ? "Code restored" : "Codes restored", "success");
-    } catch (error) {
+    } catch {
       showToast("Restore failed", "error");
     }
   };
@@ -553,10 +576,15 @@ export function useNotes(workspace) {
 
     const codeValue = codeId === activeCodeId ? codeText : entry.code ?? "";
     try {
-      const data = await updateCodeAPI(workspaceId, codeId, {
-        title: nextTitle ?? "",
-        code: codeValue,
-      });
+      const data = await updateCodeAPI(
+        workspaceId,
+        codeId,
+        {
+          title: nextTitle ?? "",
+          code: codeValue,
+        },
+        workspaceAccessToken
+      );
       setCodes(data);
       if (codeId === activeCodeId) {
         const updated = data.find((c) => c._id === codeId);
@@ -569,7 +597,7 @@ export function useNotes(workspace) {
         }
       }
       showToast("Title updated", "success");
-    } catch (error) {
+    } catch {
       showToast("Rename failed", "error");
     }
   };
@@ -603,7 +631,7 @@ export function useNotes(workspace) {
 
     try {
       for (const id of uniqueIds) {
-        await deleteCodeAPI(workspaceId, id);
+        await deleteCodeAPI(workspaceId, id, workspaceAccessToken);
       }
       deleteCodesFromState(uniqueIds);
 
@@ -612,7 +640,7 @@ export function useNotes(workspace) {
       showToast(message, "success", "Undo", async () => {
         await restoreCodes(restoreItems);
       });
-    } catch (error) {
+    } catch {
       showToast("Delete failed", "error");
     }
   };

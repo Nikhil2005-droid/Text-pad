@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import {
   handleAutoReplaceBeforeInput,
   handleAutoReplaceKeyDown,
@@ -25,7 +25,7 @@ export default function NoteEditor({
   const textareaRef = useRef(null);
   const canvasRef = useRef(null);
 
-  const drawRuledLines = () => {
+  const drawRuledLines = useCallback(() => {
     if (!ruledLinesEnabled) return;
     const ta = textareaRef.current;
     const canvas = canvasRef.current;
@@ -92,7 +92,7 @@ export default function NoteEditor({
       ctx.stroke();
       y += lineHeight;
     }
-  };
+  }, [ruledLinesEnabled]);
 
   useLayoutEffect(() => {
     if (!ruledLinesEnabled) return;
@@ -117,7 +117,7 @@ export default function NoteEditor({
       window.removeEventListener("resize", schedule);
       ro.disconnect();
     };
-  }, [activeNoteId, ruledLinesEnabled]);
+  }, [activeNoteId, drawRuledLines, ruledLinesEnabled]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {

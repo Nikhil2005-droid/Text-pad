@@ -12,12 +12,18 @@ export default function Navbar() {
   const [isWorkspaceMenuOpen, setIsWorkspaceMenuOpen] = useState(false);
   const [draftWorkspaceId, setDraftWorkspaceId] = useState("");
   const [isRenaming, setIsRenaming] = useState(false);
-  const workspaceMenuRef = useRef(null);
   const navigate = useNavigate();
   const location = useLocation();
+  const workspaceMenuRef = useRef(null);
+  const previousPathnameRef = useRef(location.pathname);
 
-  const { workspace, renameWorkspace, closeWorkspace, runWorkspaceSaveHandler } =
-    useWorkspace();
+  const {
+    workspace,
+    renameWorkspace,
+    lockWorkspace,
+    closeWorkspace,
+    runWorkspaceSaveHandler,
+  } = useWorkspace();
   const workspaceLabel =
     workspace?.workspaceName || workspace?.workspaceId || "No workspace";
   const hasWorkspace = !!workspace?.workspaceId;
@@ -42,6 +48,24 @@ export default function Navbar() {
     window.addEventListener("pointerdown", handlePointerDown);
     return () => window.removeEventListener("pointerdown", handlePointerDown);
   }, [isWorkspaceMenuOpen]);
+
+  useEffect(() => {
+    const previousPathname = previousPathnameRef.current;
+    const wasWorkspacePage =
+      previousPathname === "/" || previousPathname === "/workspace";
+
+    if (isWorkspacePage && !wasWorkspacePage && workspace?.isPasswordProtected) {
+      lockWorkspace(workspace.workspaceId);
+    }
+
+    previousPathnameRef.current = location.pathname;
+  }, [
+    isWorkspacePage,
+    location.pathname,
+    lockWorkspace,
+    workspace?.isPasswordProtected,
+    workspace?.workspaceId,
+  ]);
 
   const handleRename = async () => {
     if (!hasWorkspace) return;
@@ -69,6 +93,16 @@ export default function Navbar() {
       if (!ok) return;
     }
 
+    const isOpeningWorkspaceRoute = to === "/" || to === "/workspace";
+    if (
+      hasWorkspace &&
+      !isWorkspacePage &&
+      isOpeningWorkspaceRoute &&
+      workspace?.isPasswordProtected
+    ) {
+      lockWorkspace(workspace.workspaceId);
+    }
+
     navigate(to);
   };
 
@@ -89,12 +123,16 @@ export default function Navbar() {
                   if (isWorkspacePage) {
                     const ok = await runWorkspaceSaveHandler();
                     if (!ok) return;
+                    if (workspace?.isPasswordProtected) {
+                      lockWorkspace(workspace.workspaceId);
+                      return;
+                    }
                     closeWorkspace();
                     return;
                   }
 
                   // On other pages: back returns to the workspace page.
-                  navigate("/");
+                  await goTo("/");
                 }}
                 aria-label={backButtonLabel}
                 title={backButtonLabel}
@@ -128,7 +166,7 @@ export default function Navbar() {
             <div>
               <div className="flex flex-wrap items-center gap-2 text-slate-900">
                 <p className="text-xs font-semibold uppercase leading-none tracking-[0.22em] text-slate-500">
-                  TEXT_PAD
+                  TEXT PAD
                 </p>
               </div>
               <div

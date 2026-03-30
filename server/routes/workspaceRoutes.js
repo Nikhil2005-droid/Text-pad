@@ -1,6 +1,70 @@
 const express = require("express");
 const router = express.Router();
 const Workspace = require("../models/Workspace");
+const {
+  createWorkspaceAccessToken,
+  createWorkspacePasswordHash,
+  getWorkspaceAccessToken,
+  hasWorkspaceAccessToken,
+  reassignWorkspaceAccessTokens,
+  revokeWorkspaceAccessTokens,
+  sanitizeWorkspace,
+  verifyWorkspacePassword,
+} = require("../utils/workspaceSecurity");
+
+function normalizeWorkspaceId(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function resolveRequestedWorkspaceId(nextWorkspaceId, workspaceId) {
+  if (typeof nextWorkspaceId === "string") return nextWorkspaceId;
+  if (typeof workspaceId === "string") return workspaceId;
+  return null;
+}
+
+function getWorkspaceResponseAccessToken(workspaceId, existingAccessToken) {
+  if (
+    existingAccessToken &&
+    hasWorkspaceAccessToken(workspaceId, existingAccessToken)
+  ) {
+    return existingAccessToken;
+  }
+
+  return createWorkspaceAccessToken(workspaceId);
+}
+
+async function requireWorkspaceAccess(req, res, next) {
+  try {
+    const workspace = await Workspace.findOne({
+      workspaceId: req.params.workspaceId,
+    });
+
+    if (!workspace) {
+      return res.status(404).json({ message: "Workspace not found" });
+    }
+
+    req.workspace = workspace;
+
+    if (!workspace.security?.isPasswordProtected) {
+      req.workspaceAccessToken = null;
+      return next();
+    }
+
+    const accessToken = getWorkspaceAccessToken(req);
+    if (!hasWorkspaceAccessToken(workspace.workspaceId, accessToken)) {
+      return res.status(401).json({
+        message: "Workspace password required",
+        requiresPassword: true,
+      });
+    }
+
+    req.workspaceAccessToken = accessToken;
+    next();
+  } catch (err) {
+    console.error("Workspace access error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+}
 
 /**
  * OPEN or CREATE a workspace
@@ -8,115 +72,206 @@ const Workspace = require("../models/Workspace");
  */
 router.post("/open", async (req, res) => {
   try {
-    const { workspaceId } = req.body;
+    const { workspaceId, password } = req.body ?? {};
+    const workspaceIdTrimmed = normalizeWorkspaceId(workspaceId);
 
-    if (!workspaceId) {
+    if (!workspaceIdTrimmed) {
       return res.status(400).json({ message: "workspaceId is required" });
     }
-    const workspaceIdTrimmed = workspaceId.trim();
     if (workspaceIdTrimmed.length < 3) {
-      return res.status(400).json({ message: "workspaceId must be at least 3 characters" });
+      return res
+        .status(400)
+        .json({ message: "workspaceId must be at least 3 characters" });
     }
 
-    let workspace = await Workspace.findOne({ workspaceId: workspaceIdTrimmed });
+    let workspace = await Workspace.findOne({
+      workspaceId: workspaceIdTrimmed,
+    }).select("+security.passwordHash +security.passwordSalt");
 
     if (!workspace) {
       workspace = await Workspace.create({
         workspaceId: workspaceIdTrimmed,
         workspaceName: workspaceIdTrimmed,
         notes: [],
-        codes: []
+        codes: [],
       });
-    } else if (!workspace.workspaceName) {
+
+      return res.json(sanitizeWorkspace(workspace));
+    }
+
+    if (!workspace.workspaceName) {
       workspace.workspaceName = workspace.workspaceId;
       await workspace.save();
     }
 
-    res.json(workspace);
+    if (workspace.security?.isPasswordProtected) {
+      if (typeof password !== "string" || password.length === 0) {
+        return res.status(401).json({
+          message: "Workspace password required",
+          requiresPassword: true,
+        });
+      }
+
+      const isPasswordValid = verifyWorkspacePassword(
+        password,
+        workspace.security?.passwordHash,
+        workspace.security?.passwordSalt
+      );
+
+      if (!isPasswordValid) {
+        return res.status(401).json({
+          message: "Incorrect workspace password",
+          requiresPassword: true,
+        });
+      }
+
+      const accessToken = createWorkspaceAccessToken(workspace.workspaceId);
+      return res.json(sanitizeWorkspace(workspace, { accessToken }));
+    }
+
+    res.json(sanitizeWorkspace(workspace));
   } catch (err) {
     console.error("Open workspace error:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
 
+router.use("/:workspaceId", requireWorkspaceAccess);
+
 /**
  * GET workspace with notes
  * GET /api/workspaces/:workspaceId
  */
 router.get("/:workspaceId", async (req, res) => {
+  res.json(sanitizeWorkspace(req.workspace));
+});
+
+/**
+ * UPDATE workspace settings (e.g., name, preferences, password protection)
+ * PATCH /api/workspaces/:workspaceId
+ */
+router.patch("/:workspaceId", async (req, res) => {
   try {
+    const { workspaceName, nextWorkspaceId, workspaceId, preferences, security } =
+      req.body ?? {};
+    const requestedNextId = resolveRequestedWorkspaceId(
+      nextWorkspaceId,
+      workspaceId
+    );
+    const previousWorkspaceId = req.params.workspaceId;
+
     const workspace = await Workspace.findOne({
-      workspaceId: req.params.workspaceId
-    });
+      workspaceId: previousWorkspaceId,
+    }).select("+security.passwordHash +security.passwordSalt");
 
     if (!workspace) {
       return res.status(404).json({ message: "Workspace not found" });
     }
 
-    res.json(workspace);
-  } catch (err) {
-    console.error("Fetch workspace error:", err);
-    res.status(500).json({ message: "Server error" });
-  }
-});
-
-/**
- * UPDATE workspace settings (e.g., name)
- * PATCH /api/workspaces/:workspaceId
- */
-router.patch("/:workspaceId", async (req, res) => {
-  try {
-    const { workspaceName, nextWorkspaceId, workspaceId, preferences } = req.body;
-    const requestedNextId =
-      typeof nextWorkspaceId === "string"
-        ? nextWorkspaceId
-        : typeof workspaceId === "string"
-        ? workspaceId
-        : null;
-
-    const update = {};
     if (typeof workspaceName === "string") {
-      update.workspaceName = workspaceName;
+      workspace.workspaceName = workspaceName;
     }
+
     if (requestedNextId !== null) {
-      const trimmed = requestedNextId.trim();
-      if (trimmed.length < 3) {
+      const trimmedWorkspaceId = normalizeWorkspaceId(requestedNextId);
+      if (trimmedWorkspaceId.length < 3) {
         return res
           .status(400)
           .json({ message: "workspaceId must be at least 3 characters" });
       }
-      update.workspaceId = trimmed;
-      // If no explicit name is provided, keep display name in sync with id.
+
+      workspace.workspaceId = trimmedWorkspaceId;
       if (typeof workspaceName !== "string") {
-        update.workspaceName = trimmed;
+        workspace.workspaceName = trimmedWorkspaceId;
       }
     }
 
     if (preferences && typeof preferences === "object") {
-      const allowed = [
+      const allowedPreferences = [
         "autoReplace",
         "ruledNotes",
         "confirmDeletes",
         "showAutosaveToasts",
       ];
-      for (const key of allowed) {
+
+      for (const key of allowedPreferences) {
         if (typeof preferences[key] === "boolean") {
-          update[`preferences.${key}`] = preferences[key];
+          workspace.preferences[key] = preferences[key];
         }
       }
     }
 
-    const workspace = await Workspace.findOneAndUpdate(
-      { workspaceId: req.params.workspaceId },
-      { $set: update },
-      { new: true, runValidators: true }
-    );
+    if (security && typeof security === "object") {
+      const { currentPassword, nextPassword, removePassword } = security;
+      const isProtected = Boolean(workspace.security?.isPasswordProtected);
 
-    if (!workspace) {
-      return res.status(404).json({ message: "Workspace not found" });
+      if (removePassword) {
+        if (
+          isProtected &&
+          !verifyWorkspacePassword(
+            currentPassword,
+            workspace.security?.passwordHash,
+            workspace.security?.passwordSalt
+          )
+        ) {
+          return res.status(401).json({
+            message: "Current workspace password is incorrect",
+          });
+        }
+
+        workspace.security = {
+          isPasswordProtected: false,
+          passwordHash: "",
+          passwordSalt: "",
+        };
+        revokeWorkspaceAccessTokens(previousWorkspaceId);
+      } else if (typeof nextPassword === "string") {
+        if (nextPassword.length < 4) {
+          return res.status(400).json({
+            message: "Workspace password must be at least 4 characters",
+          });
+        }
+
+        if (
+          isProtected &&
+          !verifyWorkspacePassword(
+            currentPassword,
+            workspace.security?.passwordHash,
+            workspace.security?.passwordSalt
+          )
+        ) {
+          return res.status(401).json({
+            message: "Current workspace password is incorrect",
+          });
+        }
+
+        const { passwordHash, passwordSalt } =
+          createWorkspacePasswordHash(nextPassword);
+        workspace.security = {
+          isPasswordProtected: true,
+          passwordHash,
+          passwordSalt,
+        };
+      }
     }
 
-    res.json(workspace);
+    await workspace.save();
+
+    if (previousWorkspaceId !== workspace.workspaceId) {
+      reassignWorkspaceAccessTokens(previousWorkspaceId, workspace.workspaceId);
+    }
+
+    const responseExtras = {};
+    if (workspace.security?.isPasswordProtected) {
+      responseExtras.accessToken = getWorkspaceResponseAccessToken(
+        workspace.workspaceId,
+        req.workspaceAccessToken
+      );
+    } else if (req.workspaceAccessToken) {
+      responseExtras.accessToken = null;
+    }
+
+    res.json(sanitizeWorkspace(workspace, responseExtras));
   } catch (err) {
     if (err && err.code === 11000) {
       return res.status(409).json({ message: "workspaceId already exists" });
@@ -142,9 +297,9 @@ router.post("/:workspaceId/notes", async (req, res) => {
             title,
             content,
             createdAt: new Date(),
-            updatedAt: new Date()
-          }
-        }
+            updatedAt: new Date(),
+          },
+        },
       },
       { new: true }
     );
@@ -266,14 +421,14 @@ router.put("/:workspaceId/notes/:noteId", async (req, res) => {
     const workspace = await Workspace.findOneAndUpdate(
       {
         workspaceId: req.params.workspaceId,
-        "notes._id": req.params.noteId
+        "notes._id": req.params.noteId,
       },
       {
         $set: {
           "notes.$.title": title,
           "notes.$.content": content,
-          "notes.$.updatedAt": new Date()
-        }
+          "notes.$.updatedAt": new Date(),
+        },
       },
       { new: true }
     );
@@ -299,8 +454,8 @@ router.delete("/:workspaceId/notes/:noteId", async (req, res) => {
       { workspaceId: req.params.workspaceId },
       {
         $pull: {
-          notes: { _id: req.params.noteId }
-        }
+          notes: { _id: req.params.noteId },
+        },
       },
       { new: true }
     );
@@ -323,13 +478,14 @@ router.delete("/:workspaceId/notes/:noteId", async (req, res) => {
 router.delete("/:workspaceId", async (req, res) => {
   try {
     const workspace = await Workspace.findOneAndDelete({
-      workspaceId: req.params.workspaceId
+      workspaceId: req.params.workspaceId,
     });
 
     if (!workspace) {
       return res.status(404).json({ message: "Workspace not found" });
     }
 
+    revokeWorkspaceAccessTokens(req.params.workspaceId);
     res.json({ message: "Workspace deleted successfully" });
   } catch (err) {
     console.error("Delete workspace error:", err);

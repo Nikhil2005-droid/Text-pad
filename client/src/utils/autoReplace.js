@@ -29,7 +29,7 @@ function isEventComposing(event) {
   return Boolean(native?.isComposing ?? event?.isComposing);
 }
 
-function tryReplaceAtCaret({ event, target, data, replacements }) {
+function tryReplaceAtCaret({ target, data, replacements }) {
   if (!target) return false;
   if (typeof data !== "string" || data.length === 0) return false;
 
@@ -112,7 +112,7 @@ export function handleAutoReplaceBeforeInput(event, replacements = DEFAULT_REPLA
 
   if (!matched) return;
   event.preventDefault();
-  tryReplaceAtCaret({ event, target, data, replacements });
+  tryReplaceAtCaret({ target, data, replacements });
 }
 
 export const AUTO_REPLACE_DEFAULTS = DEFAULT_REPLACEMENTS;
@@ -146,5 +146,5 @@ export function handleAutoReplaceKeyDown(event, replacements = DEFAULT_REPLACEME
   if (!matched) return;
 
   event.preventDefault();
-  tryReplaceAtCaret({ event, target, data, replacements });
+  tryReplaceAtCaret({ target, data, replacements });
 }

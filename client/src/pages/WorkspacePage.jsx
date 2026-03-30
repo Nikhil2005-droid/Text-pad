@@ -43,14 +43,19 @@ function useMediaQuery(query) {
 export default function WorkspacePage() {
   const {
     workspace,
+    workspaceAccessToken,
     workspaceId,
     setWorkspaceId,
+    workspacePassword,
+    setWorkspacePassword,
+    requiresWorkspacePassword,
+    workspaceOpenError,
     openWorkspace,
     deleteWorkspace,
     setWorkspaceSaveHandler,
   } = useWorkspace();
 
-  const notesState = useNotes(workspace);
+  const notesState = useNotes(workspace, workspaceAccessToken);
   const [viewMode, setViewMode] = useState("notes");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
@@ -66,7 +71,10 @@ export default function WorkspacePage() {
   const ruledNotesEnabled = prefs.ruledNotes ?? true;
   const confirmDeletes = prefs.confirmDeletes ?? true;
   const showAutosaveToasts = prefs.showAutosaveToasts ?? false;
-  const autosaveOptions = { silent: !showAutosaveToasts };
+  const autosaveOptions = useMemo(
+    () => ({ silent: !showAutosaveToasts }),
+    [showAutosaveToasts]
+  );
   const codeAutoReplaceProps = autoReplaceEnabled
     ? {
         onBeforeInput: handleAutoReplaceBeforeInput,
@@ -147,6 +155,10 @@ export default function WorkspacePage() {
       <WorkspaceGate
         workspaceId={workspaceId}
         setWorkspaceId={setWorkspaceId}
+        workspacePassword={workspacePassword}
+        setWorkspacePassword={setWorkspacePassword}
+        requiresWorkspacePassword={requiresWorkspacePassword}
+        workspaceOpenError={workspaceOpenError}
         onOpen={openWorkspace}
       />
     );

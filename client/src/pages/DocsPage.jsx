@@ -28,6 +28,14 @@ export default function DocsPage() {
             <li>Press Enter to open (no mouse required).</li>
             <li>Workspace ID input supports show/hide (password-style).</li>
             <li>
+              Workspace protection can be enabled later from Settings with an
+              optional password.
+            </li>
+            <li>
+              Protected workspaces ask for the workspace password before they
+              open.
+            </li>
+            <li>
               Workspace selection triggers loading notes + code entries
               automatically.
             </li>
@@ -45,7 +53,11 @@ export default function DocsPage() {
               Leaving the workspace editor auto-saves your draft to avoid losing
               changes.
             </li>
-            <li>Navbar is sticky; footer stays fixed at the bottom.</li>
+            <li>
+              Returning to a protected workspace reopens the password gate
+              before the workspace content loads.
+            </li>
+            <li>Navbar is sticky; footer sits inside the page layout.</li>
           </ul>
         </div>
 
@@ -110,6 +122,13 @@ export default function DocsPage() {
             <li>Confirm before delete: on/off.</li>
             <li>Show autosave toasts: on/off.</li>
             <li>Modify Workspace: rename workspace ID (3+ characters).</li>
+            <li>
+              Workspace Protection: set, change, or remove a workspace password.
+            </li>
+            <li>
+              After protection is enabled, Settings shows that the workspace is
+              protected.
+            </li>
           </ul>
         </div>
 

@@ -50,6 +50,26 @@ const preferencesSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const securitySchema = new mongoose.Schema(
+  {
+    isPasswordProtected: {
+      type: Boolean,
+      default: false,
+    },
+    passwordHash: {
+      type: String,
+      default: "",
+      select: false,
+    },
+    passwordSalt: {
+      type: String,
+      default: "",
+      select: false,
+    },
+  },
+  { _id: false }
+);
+
 const workspaceSchema = new mongoose.Schema(
   {
     workspaceId: {
@@ -64,6 +84,10 @@ const workspaceSchema = new mongoose.Schema(
     },
     preferences: {
       type: preferencesSchema,
+      default: () => ({}),
+    },
+    security: {
+      type: securitySchema,
       default: () => ({}),
     },
     notes: [noteSchema],
