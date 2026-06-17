@@ -5,10 +5,10 @@
   "description": "Workspace-based notes and code pad with a React frontend and Express/MongoDB backend.",
   "main": "server/server.js",
   "engines": {
-    "node": ">=20"
+    "node": "20.x"
   },
   "scripts": {
-    "client:install": "npm --prefix client install",
+    "client:install": "npm --prefix client install --include=dev",
     "client:dev": "npm --prefix client run dev",
     "client:build": "npm --prefix client run build",
     "client:lint": "npm --prefix client run lint",
