@@ -11,6 +11,14 @@ import {
   openWorkspaceAPI,
   updateWorkspaceAPI,
 } from "../api";
+import { useAppFeedback } from "./AppFeedbackContext.jsx";
+import {
+  readRecentWorkspaces,
+  removeRecentWorkspace,
+  replaceRecentWorkspace,
+  upsertRecentWorkspace,
+  writeRecentWorkspaces,
+} from "../utils/recentWorkspaces.js";
 
 const WorkspaceContext = createContext(null);
 const PROTECTED_WORKSPACE_ID_KEY = "textpad.protectedWorkspaceId";
@@ -41,7 +49,21 @@ function readProtectedWorkspaceId() {
   return readStorage(PROTECTED_WORKSPACE_ID_KEY) || "";
 }
 
+function migrateKey(oldKey, newKey) {
+  try {
+    const oldValue = localStorage.getItem(oldKey);
+    if (oldValue === null) return;
+    if (localStorage.getItem(newKey) === null) {
+      localStorage.setItem(newKey, oldValue);
+    }
+    localStorage.removeItem(oldKey);
+  } catch {
+    // ignore storage errors
+  }
+}
+
 export function WorkspaceProvider({ children }) {
+  const { confirm, notify } = useAppFeedback();
   const initialProtectedWorkspaceId = readProtectedWorkspaceId();
   const shouldPromptForProtectedWorkspace = Boolean(
     initialProtectedWorkspaceId
@@ -57,7 +79,17 @@ export function WorkspaceProvider({ children }) {
   const [workspaceOpenError, setWorkspaceOpenError] = useState(
     shouldPromptForProtectedWorkspace ? PROTECTED_WORKSPACE_PROMPT : ""
   );
+  const [recentWorkspaces, setRecentWorkspaces] = useState(() =>
+    readRecentWorkspaces()
+  );
   const workspaceSaveHandlerRef = useRef(null);
+  const workspaceRef = useRef(null);
+  const workspaceAccessTokenRef = useRef(null);
+  const confirmedWorkspaceRef = useRef(null);
+  const confirmedAccessTokenRef = useRef(null);
+  const pendingPreferencePatchesRef = useRef([]);
+  const preferenceQueueRef = useRef(Promise.resolve());
+  const preferenceMutationIdRef = useRef(0);
 
   const rememberProtectedWorkspace = useCallback((workspaceId) => {
     if (!workspaceId) return;
@@ -68,46 +100,155 @@ export function WorkspaceProvider({ children }) {
     writeStorage(PROTECTED_WORKSPACE_ID_KEY, null);
   }, []);
 
+  const updateRecentWorkspaces = useCallback((updater) => {
+    setRecentWorkspaces((current) => {
+      const next =
+        typeof updater === "function" ? updater(current) : current;
+      writeRecentWorkspaces(next);
+      return next;
+    });
+  }, []);
+
+  const rememberRecentWorkspace = useCallback(
+    (nextWorkspace, { bumpTimestamp = true } = {}) => {
+      if (!nextWorkspace?.workspaceId) return;
+
+      updateRecentWorkspaces((current) => {
+        const previous = current.find(
+          (entry) => entry.workspaceId === nextWorkspace.workspaceId
+        );
+
+        return upsertRecentWorkspace(current, {
+          workspaceId: nextWorkspace.workspaceId,
+          workspaceName:
+            nextWorkspace.workspaceName || nextWorkspace.workspaceId,
+          isPasswordProtected: nextWorkspace.isPasswordProtected,
+          lastOpenedAt:
+            bumpTimestamp || !previous?.lastOpenedAt
+              ? new Date().toISOString()
+              : previous.lastOpenedAt,
+        });
+      });
+    },
+    [updateRecentWorkspaces]
+  );
+
+  const forgetRecentWorkspace = useCallback(
+    (workspaceId) => {
+      if (!workspaceId) return;
+      updateRecentWorkspaces((current) =>
+        removeRecentWorkspace(current, workspaceId)
+      );
+    },
+    [updateRecentWorkspaces]
+  );
+
+  const resetWorkspaceSession = useCallback(() => {
+    workspaceSaveHandlerRef.current = null;
+    workspaceRef.current = null;
+    workspaceAccessTokenRef.current = null;
+    confirmedWorkspaceRef.current = null;
+    confirmedAccessTokenRef.current = null;
+    pendingPreferencePatchesRef.current = [];
+    preferenceQueueRef.current = Promise.resolve();
+    preferenceMutationIdRef.current = 0;
+  }, []);
+
   const clearWorkspaceOpenState = useCallback(() => {
     setWorkspacePasswordInput("");
     setRequiresWorkspacePassword(false);
     setWorkspaceOpenError("");
   }, []);
 
-  const promptForProtectedWorkspace = useCallback((workspaceId) => {
-    if (!workspaceId) return;
-    setWorkspace(null);
-    setWorkspaceAccessToken(null);
-    setWorkspaceIdInput(workspaceId);
-    setWorkspacePasswordInput("");
-    setRequiresWorkspacePassword(true);
-    setWorkspaceOpenError(PROTECTED_WORKSPACE_PROMPT);
-  }, []);
+  const promptForProtectedWorkspace = useCallback(
+    (workspaceId) => {
+      if (!workspaceId) return;
+      resetWorkspaceSession();
+      setWorkspace(null);
+      setWorkspaceAccessToken(null);
+      setWorkspaceIdInput(workspaceId);
+      setWorkspacePasswordInput("");
+      setRequiresWorkspacePassword(true);
+      setWorkspaceOpenError(PROTECTED_WORKSPACE_PROMPT);
+    },
+    [resetWorkspaceSession]
+  );
 
-  const applyWorkspaceResponse = useCallback((payload, fallbackAccessToken = null) => {
-    if (!payload || typeof payload !== "object") return null;
+  const parseWorkspaceResponse = useCallback(
+    (payload, fallbackAccessToken = null) => {
+      if (!payload || typeof payload !== "object") return null;
 
-    const nextWorkspace = { ...payload };
-    const nextAccessToken = Object.prototype.hasOwnProperty.call(
-      nextWorkspace,
-      "accessToken"
-    )
-      ? nextWorkspace.accessToken
-      : fallbackAccessToken;
+      const nextWorkspace = { ...payload };
+      const nextAccessToken = Object.prototype.hasOwnProperty.call(
+        nextWorkspace,
+        "accessToken"
+      )
+        ? nextWorkspace.accessToken
+        : fallbackAccessToken;
 
-    delete nextWorkspace.accessToken;
+      delete nextWorkspace.accessToken;
 
-    if (nextWorkspace.isPasswordProtected && nextWorkspace.workspaceId) {
-      rememberProtectedWorkspace(nextWorkspace.workspaceId);
-    } else {
-      forgetProtectedWorkspace();
-    }
+      return {
+        workspace: nextWorkspace,
+        accessToken: nextAccessToken || null,
+      };
+    },
+    []
+  );
 
-    setWorkspace(nextWorkspace);
-    setWorkspaceAccessToken(nextAccessToken || null);
+  const setWorkspaceSnapshot = useCallback(
+    (nextWorkspace, nextAccessToken, options = {}) => {
+      if (!nextWorkspace || typeof nextWorkspace !== "object") return null;
 
-    return nextWorkspace;
-  }, [forgetProtectedWorkspace, rememberProtectedWorkspace]);
+      if (nextWorkspace.isPasswordProtected && nextWorkspace.workspaceId) {
+        rememberProtectedWorkspace(nextWorkspace.workspaceId);
+      } else {
+        forgetProtectedWorkspace();
+      }
+
+      workspaceRef.current = nextWorkspace;
+      workspaceAccessTokenRef.current = nextAccessToken || null;
+      setWorkspace(nextWorkspace);
+      setWorkspaceAccessToken(nextAccessToken || null);
+
+      if (options.confirmed) {
+        confirmedWorkspaceRef.current = nextWorkspace;
+        confirmedAccessTokenRef.current = nextAccessToken || null;
+      }
+
+      if (options.rememberRecent) {
+        rememberRecentWorkspace(nextWorkspace, {
+          bumpTimestamp: options.bumpRecentTimestamp !== false,
+        });
+      }
+
+      return nextWorkspace;
+    },
+    [
+      forgetProtectedWorkspace,
+      rememberProtectedWorkspace,
+      rememberRecentWorkspace,
+    ]
+  );
+
+  const applyWorkspaceResponse = useCallback(
+    (payload, fallbackAccessToken = null, options = {}) => {
+      const parsed = parseWorkspaceResponse(payload, fallbackAccessToken);
+      if (!parsed) return null;
+
+      return setWorkspaceSnapshot(parsed.workspace, parsed.accessToken, {
+        confirmed: true,
+        rememberRecent: options.rememberRecent,
+        bumpRecentTimestamp: options.bumpRecentTimestamp,
+      });
+    },
+    [parseWorkspaceResponse, setWorkspaceSnapshot]
+  );
+
+  useEffect(() => {
+    workspaceRef.current = workspace;
+    workspaceAccessTokenRef.current = workspaceAccessToken;
+  }, [workspace, workspaceAccessToken]);
 
   const handleWorkspaceIdInput = useCallback(
     (value) => {
@@ -129,7 +270,6 @@ export function WorkspaceProvider({ children }) {
       const protectedWorkspaceId = readProtectedWorkspaceId();
       if (!protectedWorkspaceId) return;
 
-      workspaceSaveHandlerRef.current = null;
       promptForProtectedWorkspace(protectedWorkspaceId);
     };
 
@@ -147,17 +287,18 @@ export function WorkspaceProvider({ children }) {
     if (typeof handler !== "function") return true;
     try {
       const result = await handler();
-      // If handler returns `false`, treat that as "do not proceed".
       return result !== false;
     } catch {
       return false;
     }
   }, []);
 
-  const openWorkspace = useCallback(
-    async (passwordOverride) => {
-      const trimmed = workspaceIdInput.trim();
+  const openWorkspaceById = useCallback(
+    async (targetWorkspaceId, passwordOverride) => {
+      const trimmed = targetWorkspaceId.trim();
       if (trimmed.length < 3) return null;
+
+      setWorkspaceIdInput(trimmed);
 
       try {
         const data = await openWorkspaceAPI(
@@ -167,7 +308,9 @@ export function WorkspaceProvider({ children }) {
             : workspacePasswordInput
         );
         clearWorkspaceOpenState();
-        return applyWorkspaceResponse(data);
+        return applyWorkspaceResponse(data, null, {
+          rememberRecent: true,
+        });
       } catch (error) {
         if (error?.requiresPassword) {
           setRequiresWorkspacePassword(true);
@@ -178,16 +321,34 @@ export function WorkspaceProvider({ children }) {
         }
 
         setWorkspaceOpenError(error?.message || "Failed to open workspace");
-        window.alert(error?.message || "Failed to open workspace");
         return null;
       }
     },
     [
       applyWorkspaceResponse,
       clearWorkspaceOpenState,
-      workspaceIdInput,
       workspacePasswordInput,
     ]
+  );
+
+  const openWorkspace = useCallback(
+    async (passwordOverride) =>
+      openWorkspaceById(workspaceIdInput, passwordOverride),
+    [openWorkspaceById, workspaceIdInput]
+  );
+
+  const openRecentWorkspace = useCallback(
+    async (recentWorkspace) => {
+      const nextWorkspaceId =
+        typeof recentWorkspace === "string"
+          ? recentWorkspace
+          : recentWorkspace?.workspaceId;
+      if (!nextWorkspaceId) return null;
+
+      setWorkspacePasswordInput("");
+      return openWorkspaceById(nextWorkspaceId, "");
+    },
+    [openWorkspaceById]
   );
 
   const lockWorkspace = useCallback(
@@ -199,7 +360,6 @@ export function WorkspaceProvider({ children }) {
 
       if (!protectedWorkspaceId) return;
 
-      workspaceSaveHandlerRef.current = null;
       rememberProtectedWorkspace(protectedWorkspaceId);
       promptForProtectedWorkspace(protectedWorkspaceId);
     },
@@ -207,103 +367,278 @@ export function WorkspaceProvider({ children }) {
   );
 
   const closeWorkspace = () => {
-    workspaceSaveHandlerRef.current = null;
+    resetWorkspaceSession();
     forgetProtectedWorkspace();
     clearWorkspaceOpenState();
-    setWorkspaceAccessToken(null);
     setWorkspace(null);
+    setWorkspaceAccessToken(null);
   };
 
-  const deleteWorkspace = useCallback(async () => {
-    if (!workspace) return;
-    const confirmDelete = window.confirm(
-      "Are you sure you want to delete this workspace?"
-    );
-    if (!confirmDelete) return;
+  const deleteWorkspace = useCallback(
+    async () => {
+      if (!workspace) return;
 
-    try {
-      await deleteWorkspaceAPI(workspace.workspaceId, workspaceAccessToken);
-      workspaceSaveHandlerRef.current = null;
-      forgetProtectedWorkspace();
-      clearWorkspaceOpenState();
-      setWorkspaceAccessToken(null);
-      setWorkspace(null);
-      setWorkspaceIdInput("");
-    } catch (error) {
-      window.alert(error?.message || "Failed to delete workspace");
-    }
-  }, [
-    clearWorkspaceOpenState,
-    forgetProtectedWorkspace,
-    workspace,
-    workspaceAccessToken,
-  ]);
+      const confirmed = await confirm({
+        title: "Delete this workspace?",
+        message:
+          "This removes the workspace, all of its notes, and every code entry inside it.",
+        confirmLabel: "Delete workspace",
+        cancelLabel: "Keep workspace",
+        tone: "danger",
+      });
+      if (!confirmed) return;
 
-  const migrateKey = (oldKey, newKey) => {
-    try {
-      const oldValue = localStorage.getItem(oldKey);
-      if (oldValue === null) return;
-      if (localStorage.getItem(newKey) === null) {
-        localStorage.setItem(newKey, oldValue);
+      try {
+        await deleteWorkspaceAPI(workspace.workspaceId, workspaceAccessToken);
+        resetWorkspaceSession();
+        forgetProtectedWorkspace();
+        forgetRecentWorkspace(workspace.workspaceId);
+        clearWorkspaceOpenState();
+        setWorkspace(null);
+        setWorkspaceAccessToken(null);
+        setWorkspaceIdInput("");
+        notify({
+          title: "Workspace deleted",
+          message: "The workspace and its saved items have been removed.",
+          tone: "success",
+        });
+      } catch (error) {
+        notify({
+          title: "Delete failed",
+          message: error?.message || "Failed to delete workspace",
+          tone: "error",
+        });
       }
-      localStorage.removeItem(oldKey);
-    } catch {
-      // ignore storage errors
-    }
-  };
+    },
+    [
+      clearWorkspaceOpenState,
+      confirm,
+      forgetProtectedWorkspace,
+      forgetRecentWorkspace,
+      notify,
+      resetWorkspaceSession,
+      workspace,
+      workspaceAccessToken,
+    ]
+  );
 
-  const renameWorkspace = useCallback(
-    async (nextWorkspaceId) => {
+  const updateWorkspaceIdentity = useCallback(
+    async ({ workspaceName, nextWorkspaceId } = {}) => {
       if (!workspace) return null;
-      const trimmed = (nextWorkspaceId ?? "").trim();
-      if (trimmed.length < 3) return null;
 
       const oldId = workspace.workspaceId;
-      try {
-        const data = await updateWorkspaceAPI(
-          oldId,
-          {
-            nextWorkspaceId: trimmed,
-            workspaceName: trimmed,
-          },
-          workspaceAccessToken
-        );
-        applyWorkspaceResponse(data, workspaceAccessToken);
-        setWorkspaceIdInput(trimmed);
+      const nextIdProvided = typeof nextWorkspaceId === "string";
+      const nextNameProvided = typeof workspaceName === "string";
+      const trimmedNextId = nextIdProvided ? nextWorkspaceId.trim() : "";
+      const trimmedNextName = nextNameProvided ? workspaceName.trim() : "";
+      const patch = {};
 
-        migrateKey(`pinnedNotes:${oldId}`, `pinnedNotes:${trimmed}`);
-        migrateKey(`pinnedCodes:${oldId}`, `pinnedCodes:${trimmed}`);
+      if (nextIdProvided) {
+        if (trimmedNextId.length < 3) return null;
+        patch.nextWorkspaceId = trimmedNextId;
+      }
+
+      if (nextNameProvided) {
+        patch.workspaceName = trimmedNextName || trimmedNextId || oldId;
+      } else if (nextIdProvided) {
+        const currentName = workspace.workspaceName?.trim() || "";
+        if (!currentName || currentName === oldId) {
+          patch.workspaceName = trimmedNextId;
+        }
+      }
+
+      if (Object.keys(patch).length === 0) {
+        return workspace;
+      }
+
+      try {
+        const data = await updateWorkspaceAPI(oldId, patch, workspaceAccessToken);
+        applyWorkspaceResponse(data, workspaceAccessToken, {
+          rememberRecent: true,
+          bumpRecentTimestamp: false,
+        });
+
+        if (patch.nextWorkspaceId) {
+          setWorkspaceIdInput(patch.nextWorkspaceId);
+          migrateKey(`pinnedNotes:${oldId}`, `pinnedNotes:${patch.nextWorkspaceId}`);
+          migrateKey(`pinnedCodes:${oldId}`, `pinnedCodes:${patch.nextWorkspaceId}`);
+          updateRecentWorkspaces((current) =>
+            replaceRecentWorkspace(current, oldId, {
+              workspaceId: patch.nextWorkspaceId,
+              workspaceName:
+                patch.workspaceName ||
+                workspace.workspaceName ||
+                patch.nextWorkspaceId,
+              isPasswordProtected: workspace.isPasswordProtected,
+              lastOpenedAt:
+                current.find((entry) => entry.workspaceId === oldId)?.lastOpenedAt ??
+                new Date().toISOString(),
+            })
+          );
+        } else {
+          rememberRecentWorkspace(
+            {
+              ...(workspaceRef.current ?? workspace),
+              workspaceName:
+                patch.workspaceName ||
+                workspace.workspaceName ||
+                workspace.workspaceId,
+            },
+            { bumpTimestamp: false }
+          );
+        }
 
         return data;
       } catch (error) {
-        window.alert(error?.message || "Failed to rename workspace");
+        notify({
+          title: "Workspace update failed",
+          message: error?.message || "Unable to update the workspace right now.",
+          tone: "error",
+        });
         return null;
       }
     },
-    [applyWorkspaceResponse, workspace, workspaceAccessToken]
+    [
+      applyWorkspaceResponse,
+      notify,
+      rememberRecentWorkspace,
+      updateRecentWorkspaces,
+      workspace,
+      workspaceAccessToken,
+    ]
+  );
+
+  const updateWorkspaceTitle = useCallback(
+    async (nextWorkspaceName) =>
+      updateWorkspaceIdentity({ workspaceName: nextWorkspaceName }),
+    [updateWorkspaceIdentity]
+  );
+
+  const renameWorkspaceId = useCallback(
+    async (nextWorkspaceId) =>
+      updateWorkspaceIdentity({ nextWorkspaceId }),
+    [updateWorkspaceIdentity]
   );
 
   const updatePreferences = useCallback(
     async (patch) => {
-      if (!workspace) return null;
+      const currentWorkspace = workspaceRef.current;
+      const currentAccessToken = workspaceAccessTokenRef.current;
+      if (!currentWorkspace) return null;
       if (!patch || typeof patch !== "object") return null;
+      if (Object.keys(patch).length === 0) return null;
 
-      try {
-        const data = await updateWorkspaceAPI(
-          workspace.workspaceId,
-          {
-            preferences: patch,
-          },
-          workspaceAccessToken
+      const mutationId = ++preferenceMutationIdRef.current;
+      pendingPreferencePatchesRef.current = [
+        ...pendingPreferencePatchesRef.current,
+        { id: mutationId, patch },
+      ];
+
+      const mergePendingPatches = () =>
+        pendingPreferencePatchesRef.current.reduce(
+          (merged, entry) => ({ ...merged, ...entry.patch }),
+          {}
         );
-        applyWorkspaceResponse(data, workspaceAccessToken);
-        return data;
-      } catch (error) {
-        window.alert(error?.message || "Failed to update preferences");
-        return null;
-      }
+
+      setWorkspaceSnapshot(
+        {
+          ...currentWorkspace,
+          preferences: {
+            ...(currentWorkspace.preferences ?? {}),
+            ...mergePendingPatches(),
+          },
+        },
+        currentAccessToken
+      );
+
+      const runMutation = async () => {
+        try {
+          const data = await updateWorkspaceAPI(
+            currentWorkspace.workspaceId,
+            {
+              preferences: patch,
+            },
+            currentAccessToken
+          );
+
+          const parsed = parseWorkspaceResponse(data, currentAccessToken);
+          pendingPreferencePatchesRef.current = pendingPreferencePatchesRef.current.filter(
+            (entry) => entry.id !== mutationId
+          );
+
+          if (!parsed) {
+            return data;
+          }
+
+          const activeWorkspaceId =
+            workspaceRef.current?.workspaceId ??
+            confirmedWorkspaceRef.current?.workspaceId;
+          if (activeWorkspaceId !== currentWorkspace.workspaceId) {
+            return data;
+          }
+
+          confirmedWorkspaceRef.current = parsed.workspace;
+          confirmedAccessTokenRef.current = parsed.accessToken;
+
+          setWorkspaceSnapshot(
+            {
+              ...parsed.workspace,
+              preferences: {
+                ...(parsed.workspace.preferences ?? {}),
+                ...mergePendingPatches(),
+              },
+            },
+            parsed.accessToken
+          );
+
+          return data;
+        } catch (error) {
+          pendingPreferencePatchesRef.current = pendingPreferencePatchesRef.current.filter(
+            (entry) => entry.id !== mutationId
+          );
+
+          const activeWorkspaceId =
+            workspaceRef.current?.workspaceId ??
+            confirmedWorkspaceRef.current?.workspaceId;
+          if (activeWorkspaceId !== currentWorkspace.workspaceId) {
+            return null;
+          }
+
+          const rollbackWorkspace =
+            confirmedWorkspaceRef.current ?? currentWorkspace;
+          const rollbackAccessToken =
+            confirmedAccessTokenRef.current ?? currentAccessToken;
+
+          if (rollbackWorkspace) {
+            setWorkspaceSnapshot(
+              {
+                ...rollbackWorkspace,
+                preferences: {
+                  ...(rollbackWorkspace.preferences ?? {}),
+                  ...mergePendingPatches(),
+                },
+              },
+              rollbackAccessToken
+            );
+          }
+
+          notify({
+            title: "Preferences were not saved",
+            message: error?.message || "Failed to update preferences",
+            tone: "error",
+          });
+          return null;
+        }
+      };
+
+      preferenceQueueRef.current = preferenceQueueRef.current.then(
+        runMutation,
+        runMutation
+      );
+
+      return preferenceQueueRef.current;
     },
-    [applyWorkspaceResponse, workspace, workspaceAccessToken]
+    [notify, parseWorkspaceResponse, setWorkspaceSnapshot]
   );
 
   const updateWorkspaceSecurity = useCallback(
@@ -327,7 +662,10 @@ export function WorkspaceProvider({ children }) {
           { security: patch },
           workspaceAccessToken
         );
-        const nextWorkspace = applyWorkspaceResponse(data, workspaceAccessToken);
+        const nextWorkspace = applyWorkspaceResponse(data, workspaceAccessToken, {
+          rememberRecent: true,
+          bumpRecentTimestamp: false,
+        });
         return { data: nextWorkspace, error: null };
       } catch (error) {
         return { data: null, error };
@@ -345,11 +683,17 @@ export function WorkspaceProvider({ children }) {
     setWorkspacePasswordInput: handleWorkspacePasswordInput,
     requiresWorkspacePassword,
     workspaceOpenError,
+    recentWorkspaces,
     openWorkspace,
+    openRecentWorkspace,
+    removeRecentWorkspace: forgetRecentWorkspace,
     lockWorkspace,
     closeWorkspace,
     deleteWorkspace,
-    renameWorkspace,
+    renameWorkspaceId,
+    renameWorkspace: renameWorkspaceId,
+    updateWorkspaceTitle,
+    updateWorkspaceIdentity,
     updatePreferences,
     updateWorkspaceSecurity,
     setWorkspaceSaveHandler,

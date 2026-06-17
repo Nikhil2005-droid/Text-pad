@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   createCodeAPI,
@@ -9,66 +9,349 @@ import {
   updateCodeAPI,
   updateNoteAPI,
 } from "../api";
+import {
+  DEFAULT_NOTE_COLOR,
+  DEFAULT_NOTE_FONT_STYLE,
+  DEFAULT_NOTE_LANGUAGE,
+  normalizeNoteColor,
+} from "../languages/index.js";
+import {
+  DEFAULT_NOTE_RULED_LINES,
+  DEFAULT_NOTE_TEXT_SIZE,
+  extractPlainTextFromHtml,
+  normalizeNoteHtml,
+  plainTextToNoteHtml,
+} from "../utils/noteStudio.js";
+import {
+  createWorkspaceBroadcastChannel,
+  createWorkspaceBroadcastEvent,
+} from "../utils/workspaceBroadcast.js";
+
+function getDefaultNoteRuledLines(workspaceOrValue) {
+  if (typeof workspaceOrValue === "boolean") {
+    return workspaceOrValue;
+  }
+
+  return workspaceOrValue?.preferences?.ruledNotes ?? DEFAULT_NOTE_RULED_LINES;
+}
+
+function getEntityRevision(entry) {
+  return Number.isInteger(entry?.revision) ? entry.revision : 0;
+}
+
+function getSavedAtLabel(entry) {
+  return entry?.updatedAt ?? entry?.createdAt ?? null;
+}
+
+function replaceItemById(items, nextItem) {
+  const nextId = nextItem?._id;
+  if (!nextId) return items;
+
+  const exists = items.some((item) => item._id === nextId);
+  if (!exists) {
+    return [...items, nextItem];
+  }
+
+  return items.map((item) => (item._id === nextId ? nextItem : item));
+}
+
+function getNoteDraft(note = {}, defaultNoteRuledLines = DEFAULT_NOTE_RULED_LINES) {
+  const fallbackContent = note.content ?? "";
+  const contentHtml = normalizeNoteHtml(note.contentHtml, fallbackContent);
+  const content = extractPlainTextFromHtml(contentHtml) || fallbackContent;
+
+  return {
+    title: note.title ?? "",
+    content,
+    contentHtml,
+    noteLanguage: note.noteLanguage ?? DEFAULT_NOTE_LANGUAGE,
+    noteFontStyle: note.noteFontStyle ?? DEFAULT_NOTE_FONT_STYLE,
+    noteColor: normalizeNoteColor(note.noteColor ?? DEFAULT_NOTE_COLOR),
+    noteTextSize: note.noteTextSize ?? DEFAULT_NOTE_TEXT_SIZE,
+    noteRuledLines:
+      typeof note.noteRuledLines === "boolean"
+        ? note.noteRuledLines
+        : getDefaultNoteRuledLines(defaultNoteRuledLines),
+  };
+}
+
+function getNotePayload({
+  title,
+  content,
+  contentHtml,
+  noteLanguage,
+  noteFontStyle,
+  noteColor,
+  noteTextSize,
+  noteRuledLines,
+}) {
+  const normalizedContentHtml = normalizeNoteHtml(
+    contentHtml,
+    typeof content === "string" ? content : ""
+  );
+  const plainTextContent =
+    typeof content === "string" && content.length > 0
+      ? content
+      : extractPlainTextFromHtml(normalizedContentHtml);
+
+  return {
+    title,
+    content: plainTextContent,
+    contentHtml: normalizedContentHtml,
+    noteLanguage: noteLanguage ?? DEFAULT_NOTE_LANGUAGE,
+    noteFontStyle: noteFontStyle ?? DEFAULT_NOTE_FONT_STYLE,
+    noteColor: normalizeNoteColor(noteColor ?? DEFAULT_NOTE_COLOR),
+    noteTextSize: noteTextSize ?? DEFAULT_NOTE_TEXT_SIZE,
+    noteRuledLines:
+      typeof noteRuledLines === "boolean"
+        ? noteRuledLines
+        : DEFAULT_NOTE_RULED_LINES,
+  };
+}
+
+function getCodeDraft(entry = {}) {
+  return {
+    title: entry.title ?? "",
+    code: entry.code ?? "",
+  };
+}
+
+function getCodePayload({ title, code }) {
+  return {
+    title: title ?? "",
+    code: code ?? "",
+  };
+}
 
 export function useNotes(workspace, workspaceAccessToken) {
   const workspaceId = workspace?.workspaceId;
+  const defaultNoteRuledLines = getDefaultNoteRuledLines(workspace);
 
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(false);
   const [toast, setToast] = useState(null);
 
-  // Notes state
   const [notes, setNotes] = useState([]);
   const [activeNoteId, setActiveNoteId] = useState(null);
   const [noteTitle, setNoteTitle] = useState("");
   const [noteContent, setNoteContent] = useState("");
+  const [noteContentHtml, setNoteContentHtml] = useState(plainTextToNoteHtml(""));
+  const [noteLanguage, setNoteLanguage] = useState(DEFAULT_NOTE_LANGUAGE);
+  const [noteFontStyle, setNoteFontStyle] = useState(DEFAULT_NOTE_FONT_STYLE);
+  const [noteColor, setNoteColor] = useState(DEFAULT_NOTE_COLOR);
+  const [noteTextSize, setNoteTextSize] = useState(DEFAULT_NOTE_TEXT_SIZE);
+  const [noteRuledLines, setNoteRuledLines] = useState(
+    getDefaultNoteRuledLines(workspace)
+  );
+  const [noteRevision, setNoteRevision] = useState(0);
   const [savedNoteTitle, setSavedNoteTitle] = useState("");
   const [savedNoteContent, setSavedNoteContent] = useState("");
+  const [savedNoteContentHtml, setSavedNoteContentHtml] = useState(
+    plainTextToNoteHtml("")
+  );
+  const [savedNoteLanguage, setSavedNoteLanguage] = useState(DEFAULT_NOTE_LANGUAGE);
+  const [savedNoteFontStyle, setSavedNoteFontStyle] = useState(
+    DEFAULT_NOTE_FONT_STYLE
+  );
+  const [savedNoteColor, setSavedNoteColor] = useState(DEFAULT_NOTE_COLOR);
+  const [savedNoteTextSize, setSavedNoteTextSize] = useState(
+    DEFAULT_NOTE_TEXT_SIZE
+  );
+  const [savedNoteRuledLines, setSavedNoteRuledLines] = useState(
+    getDefaultNoteRuledLines(workspace)
+  );
   const [noteSaveStatus, setNoteSaveStatus] = useState("idle");
   const [lastNoteSavedAt, setLastNoteSavedAt] = useState(null);
   const [pinnedNoteIds, setPinnedNoteIds] = useState([]);
 
-  // Codes state
   const [codes, setCodes] = useState([]);
   const [activeCodeId, setActiveCodeId] = useState(null);
   const [codeTitle, setCodeTitle] = useState("");
   const [codeText, setCodeText] = useState("");
+  const [codeRevision, setCodeRevision] = useState(0);
   const [savedCodeTitle, setSavedCodeTitle] = useState("");
   const [savedCodeText, setSavedCodeText] = useState("");
   const [codeSaveStatus, setCodeSaveStatus] = useState("idle");
   const [lastCodeSavedAt, setLastCodeSavedAt] = useState(null);
   const [pinnedCodeIds, setPinnedCodeIds] = useState([]);
 
+  const latestStateRef = useRef({});
+  const broadcastChannelRef = useRef(null);
+  const broadcastSenderIdRef = useRef(
+    `textpad-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  );
+  const noteConflictKeyRef = useRef("");
+  const codeConflictKeyRef = useRef("");
+
   const noteIsDirty =
     !!activeNoteId &&
-    (noteTitle !== savedNoteTitle || noteContent !== savedNoteContent);
+    (noteTitle !== savedNoteTitle ||
+      noteContent !== savedNoteContent ||
+      noteContentHtml !== savedNoteContentHtml ||
+      noteLanguage !== savedNoteLanguage ||
+      noteFontStyle !== savedNoteFontStyle ||
+      normalizeNoteColor(noteColor) !== normalizeNoteColor(savedNoteColor) ||
+      noteTextSize !== savedNoteTextSize ||
+      noteRuledLines !== savedNoteRuledLines);
   const codeIsDirty =
     !!activeCodeId && (codeTitle !== savedCodeTitle || codeText !== savedCodeText);
 
+  useEffect(() => {
+    latestStateRef.current = {
+      notes,
+      codes,
+      activeNoteId,
+      activeCodeId,
+      noteIsDirty,
+      codeIsDirty,
+      noteRevision,
+      codeRevision,
+      noteTitle,
+      noteContent,
+      noteContentHtml,
+      noteLanguage,
+      noteFontStyle,
+      noteColor,
+      noteTextSize,
+      noteRuledLines,
+      codeTitle,
+      codeText,
+    };
+  }, [
+    activeCodeId,
+    activeNoteId,
+    codeIsDirty,
+    codeRevision,
+    codeText,
+    codeTitle,
+    codes,
+    noteColor,
+    noteContent,
+    noteContentHtml,
+    noteFontStyle,
+    noteIsDirty,
+    noteLanguage,
+    noteRevision,
+    noteRuledLines,
+    noteTextSize,
+    noteTitle,
+    notes,
+  ]);
+
   const dismissToast = () => setToast(null);
 
-  const showToast = (message, tone = "info", actionLabel, onAction) => {
-    setToast({
-      id: Date.now(),
-      message,
-      tone,
-      actionLabel,
-      onAction: onAction
-        ? async () => {
-            await onAction();
-            setToast(null);
-          }
-        : null,
-    });
-  };
+  const showToast = useCallback(
+    (message, tone = "info", actionLabel, onAction) => {
+      setToast({
+        id: Date.now(),
+        message,
+        tone,
+        actionLabel,
+        onAction: onAction
+          ? async () => {
+              await onAction();
+              setToast(null);
+            }
+          : null,
+      });
+    },
+    []
+  );
 
   useEffect(() => {
-    if (!toast) return;
+    if (!toast) return undefined;
     const timeoutId = setTimeout(
       () => setToast(null),
       toast.actionLabel ? 5000 : 2200
     );
     return () => clearTimeout(timeoutId);
   }, [toast]);
+
+  const applyDraftToActiveNote = useCallback(
+    (draft, savedAt = null, options = {}) => {
+      const { markSaved = true, revision = 0 } = options;
+
+      setNoteTitle(draft.title);
+      setNoteContent(draft.content);
+      setNoteContentHtml(draft.contentHtml);
+      setNoteLanguage(draft.noteLanguage);
+      setNoteFontStyle(draft.noteFontStyle);
+      setNoteColor(draft.noteColor);
+      setNoteTextSize(draft.noteTextSize);
+      setNoteRuledLines(draft.noteRuledLines);
+      setNoteRevision(revision);
+      setLastNoteSavedAt(savedAt);
+      noteConflictKeyRef.current = "";
+
+      if (!markSaved) {
+        return;
+      }
+
+      setSavedNoteTitle(draft.title);
+      setSavedNoteContent(draft.content);
+      setSavedNoteContentHtml(draft.contentHtml);
+      setSavedNoteLanguage(draft.noteLanguage);
+      setSavedNoteFontStyle(draft.noteFontStyle);
+      setSavedNoteColor(draft.noteColor);
+      setSavedNoteTextSize(draft.noteTextSize);
+      setSavedNoteRuledLines(draft.noteRuledLines);
+    },
+    []
+  );
+
+  const clearActiveNoteDraft = useCallback(() => {
+    const emptyHtml = plainTextToNoteHtml("");
+    setActiveNoteId(null);
+    setNoteTitle("");
+    setNoteContent("");
+    setNoteContentHtml(emptyHtml);
+    setNoteLanguage(DEFAULT_NOTE_LANGUAGE);
+    setNoteFontStyle(DEFAULT_NOTE_FONT_STYLE);
+    setNoteColor(DEFAULT_NOTE_COLOR);
+    setNoteTextSize(DEFAULT_NOTE_TEXT_SIZE);
+    setNoteRuledLines(defaultNoteRuledLines);
+    setNoteRevision(0);
+    setSavedNoteTitle("");
+    setSavedNoteContent("");
+    setSavedNoteContentHtml(emptyHtml);
+    setSavedNoteLanguage(DEFAULT_NOTE_LANGUAGE);
+    setSavedNoteFontStyle(DEFAULT_NOTE_FONT_STYLE);
+    setSavedNoteColor(DEFAULT_NOTE_COLOR);
+    setSavedNoteTextSize(DEFAULT_NOTE_TEXT_SIZE);
+    setSavedNoteRuledLines(defaultNoteRuledLines);
+    setLastNoteSavedAt(null);
+    noteConflictKeyRef.current = "";
+  }, [defaultNoteRuledLines]);
+
+  const applyDraftToActiveCode = useCallback(
+    (draft, savedAt = null, options = {}) => {
+      const { markSaved = true, revision = 0 } = options;
+
+      setCodeTitle(draft.title);
+      setCodeText(draft.code);
+      setCodeRevision(revision);
+      setLastCodeSavedAt(savedAt);
+      codeConflictKeyRef.current = "";
+
+      if (!markSaved) {
+        return;
+      }
+
+      setSavedCodeTitle(draft.title);
+      setSavedCodeText(draft.code);
+    },
+    []
+  );
+
+  const clearActiveCodeDraft = useCallback(() => {
+    setActiveCodeId(null);
+    setCodeTitle("");
+    setCodeText("");
+    setCodeRevision(0);
+    setSavedCodeTitle("");
+    setSavedCodeText("");
+    setLastCodeSavedAt(null);
+    codeConflictKeyRef.current = "";
+  }, []);
 
   const pinnedNotesKey = (id) => `pinnedNotes:${id}`;
   const pinnedCodesKey = (id) => `pinnedCodes:${id}`;
@@ -102,36 +385,154 @@ export function useNotes(workspace, workspaceAccessToken) {
   }, [workspaceId, pinnedCodeIds]);
 
   useEffect(() => {
-    setPinnedNoteIds((prev) => prev.filter((id) => notes.some((n) => n._id === id)));
+    setPinnedNoteIds((prev) => prev.filter((id) => notes.some((note) => note._id === id)));
   }, [notes]);
 
   useEffect(() => {
-    setPinnedCodeIds((prev) => prev.filter((id) => codes.some((c) => c._id === id)));
+    setPinnedCodeIds((prev) => prev.filter((id) => codes.some((entry) => entry._id === id)));
   }, [codes]);
+
+  const broadcastWorkspaceMutation = useCallback((type, payload = {}) => {
+    broadcastChannelRef.current?.postMessage(
+      createWorkspaceBroadcastEvent(
+        broadcastSenderIdRef.current,
+        type,
+        payload
+      )
+    );
+  }, []);
+
+  const syncWorkspaceSnapshot = useCallback(
+    (data, options = {}) => {
+      const { preserveSelection = false, origin = "load" } = options;
+      const nextNotes = Array.isArray(data?.notes) ? data.notes : [];
+      const nextCodes = Array.isArray(data?.codes) ? data.codes : [];
+      const {
+        activeNoteId: currentActiveNoteId,
+        activeCodeId: currentActiveCodeId,
+        noteIsDirty: currentNoteIsDirty,
+        codeIsDirty: currentCodeIsDirty,
+        noteRevision: currentNoteRevision,
+        codeRevision: currentCodeRevision,
+      } = latestStateRef.current;
+
+      setNotes(nextNotes);
+      setCodes(nextCodes);
+
+      if (!preserveSelection) {
+        if (nextNotes.length > 0) {
+          const firstNote = nextNotes[0];
+          setActiveNoteId(firstNote._id);
+          applyDraftToActiveNote(
+            getNoteDraft(firstNote, defaultNoteRuledLines),
+            getSavedAtLabel(firstNote),
+            { revision: getEntityRevision(firstNote) }
+          );
+          setNoteSaveStatus("idle");
+        } else {
+          clearActiveNoteDraft();
+          setNoteSaveStatus("idle");
+        }
+
+        clearActiveCodeDraft();
+        setCodeSaveStatus("idle");
+        return;
+      }
+
+      const nextActiveNote = currentActiveNoteId
+        ? nextNotes.find((note) => note._id === currentActiveNoteId)
+        : null;
+
+      if (!nextActiveNote) {
+        if (currentActiveNoteId) {
+          clearActiveNoteDraft();
+          setNoteSaveStatus("idle");
+          if (origin === "broadcast") {
+            showToast("A note was removed in another tab", "error");
+          }
+        }
+      } else if (!currentNoteIsDirty) {
+        setActiveNoteId(nextActiveNote._id);
+        applyDraftToActiveNote(
+          getNoteDraft(nextActiveNote, defaultNoteRuledLines),
+          getSavedAtLabel(nextActiveNote),
+          { revision: getEntityRevision(nextActiveNote) }
+        );
+        setNoteSaveStatus("idle");
+      } else if (
+        origin === "broadcast" &&
+        getEntityRevision(nextActiveNote) !== currentNoteRevision
+      ) {
+        const conflictKey = `${nextActiveNote._id}:${getEntityRevision(nextActiveNote)}`;
+        if (noteConflictKeyRef.current !== conflictKey) {
+          noteConflictKeyRef.current = conflictKey;
+          showToast("A newer version of this note is available in another tab");
+        }
+      }
+
+      const nextActiveCode = currentActiveCodeId
+        ? nextCodes.find((entry) => entry._id === currentActiveCodeId)
+        : null;
+
+      if (!nextActiveCode) {
+        if (currentActiveCodeId) {
+          clearActiveCodeDraft();
+          setCodeSaveStatus("idle");
+          if (origin === "broadcast") {
+            showToast("A code entry was removed in another tab", "error");
+          }
+        }
+      } else if (!currentCodeIsDirty) {
+        setActiveCodeId(nextActiveCode._id);
+        applyDraftToActiveCode(
+          getCodeDraft(nextActiveCode),
+          getSavedAtLabel(nextActiveCode),
+          { revision: getEntityRevision(nextActiveCode) }
+        );
+        setCodeSaveStatus("idle");
+      } else if (
+        origin === "broadcast" &&
+        getEntityRevision(nextActiveCode) !== currentCodeRevision
+      ) {
+        const conflictKey = `${nextActiveCode._id}:${getEntityRevision(nextActiveCode)}`;
+        if (codeConflictKeyRef.current !== conflictKey) {
+          codeConflictKeyRef.current = conflictKey;
+          showToast("A newer version of this code entry is available in another tab");
+        }
+      }
+    },
+    [
+      applyDraftToActiveCode,
+      applyDraftToActiveNote,
+      clearActiveCodeDraft,
+      clearActiveNoteDraft,
+      defaultNoteRuledLines,
+      showToast,
+    ]
+  );
+
+  const refreshWorkspaceFromServer = useCallback(
+    async (options = {}) => {
+      if (!workspaceId) return null;
+
+      const data = await fetchWorkspaceAPI(workspaceId, workspaceAccessToken);
+      syncWorkspaceSnapshot(data, options);
+      return data;
+    },
+    [syncWorkspaceSnapshot, workspaceAccessToken, workspaceId]
+  );
 
   useEffect(() => {
     if (!workspaceId) {
       setIsLoadingWorkspace(false);
       setToast(null);
-
       setNotes([]);
-      setActiveNoteId(null);
-      setNoteTitle("");
-      setNoteContent("");
-      setSavedNoteTitle("");
-      setSavedNoteContent("");
+      clearActiveNoteDraft();
       setNoteSaveStatus("idle");
-      setLastNoteSavedAt(null);
       setPinnedNoteIds([]);
-
       setCodes([]);
-      setActiveCodeId(null);
-      setCodeTitle("");
-      setCodeText("");
-      setSavedCodeTitle("");
-      setSavedCodeText("");
+      clearActiveCodeDraft();
       setCodeSaveStatus("idle");
-      setLastCodeSavedAt(null);
       setPinnedCodeIds([]);
       return;
     }
@@ -142,60 +543,143 @@ export function useNotes(workspace, workspaceAccessToken) {
     setPinnedCodeIds(loadPinned(pinnedCodesKey(workspaceId)));
 
     let isActive = true;
-    const loadWorkspace = async () => {
-      try {
-        const data = await fetchWorkspaceAPI(workspaceId, workspaceAccessToken);
+
+    refreshWorkspaceFromServer()
+      .catch(() => {
         if (!isActive) return;
-
-        const nextNotes = Array.isArray(data?.notes) ? data.notes : [];
-        const nextCodes = Array.isArray(data?.codes) ? data.codes : [];
-
-        setNotes(nextNotes);
-        setCodes(nextCodes);
-
-        if (nextNotes.length > 0) {
-          const firstNote = nextNotes[0];
-          setActiveNoteId(firstNote._id);
-          setNoteTitle(firstNote.title);
-          setNoteContent(firstNote.content);
-          setSavedNoteTitle(firstNote.title);
-          setSavedNoteContent(firstNote.content);
-          setLastNoteSavedAt(firstNote.updatedAt ?? firstNote.createdAt ?? null);
-        } else {
-          setActiveNoteId(null);
-          setNoteTitle("");
-          setNoteContent("");
-          setSavedNoteTitle("");
-          setSavedNoteContent("");
-          setLastNoteSavedAt(null);
-        }
-
-        // Codes default: none selected until user creates/selects one.
-        setActiveCodeId(null);
-        setCodeTitle("");
-        setCodeText("");
-        setSavedCodeTitle("");
-        setSavedCodeText("");
-        setLastCodeSavedAt(null);
-      } catch {
-        if (isActive) {
-          setNotes([]);
-          setCodes([]);
-        }
-      } finally {
+        setNotes([]);
+        setCodes([]);
+        clearActiveNoteDraft();
+        clearActiveCodeDraft();
+      })
+      .finally(() => {
         if (isActive) {
           setIsLoadingWorkspace(false);
         }
-      }
-    };
+      });
 
-    loadWorkspace();
     return () => {
       isActive = false;
     };
-  }, [workspaceAccessToken, workspaceId]);
+  }, [clearActiveCodeDraft, clearActiveNoteDraft, refreshWorkspaceFromServer, workspaceId]);
 
-  // Notes helpers
+  useEffect(() => {
+    if (!workspaceId) return undefined;
+
+    const channel = createWorkspaceBroadcastChannel(workspaceId);
+    broadcastChannelRef.current = channel;
+    if (!channel) return undefined;
+
+    const handleMessage = (event) => {
+      const incoming = event?.data;
+      if (!incoming || incoming.senderId === broadcastSenderIdRef.current) {
+        return;
+      }
+
+      void refreshWorkspaceFromServer({
+        preserveSelection: true,
+        origin: "broadcast",
+      }).catch(() => {
+        // Ignore background sync failures and keep the current draft visible.
+      });
+    };
+
+    channel.addEventListener("message", handleMessage);
+    return () => {
+      channel.removeEventListener("message", handleMessage);
+      channel.close();
+      if (broadcastChannelRef.current === channel) {
+        broadcastChannelRef.current = null;
+      }
+    };
+  }, [refreshWorkspaceFromServer, workspaceId]);
+
+  const captureCurrentNoteDraft = () =>
+    getNotePayload({
+      title: latestStateRef.current.noteTitle,
+      content: latestStateRef.current.noteContent,
+      contentHtml: latestStateRef.current.noteContentHtml,
+      noteLanguage: latestStateRef.current.noteLanguage,
+      noteFontStyle: latestStateRef.current.noteFontStyle,
+      noteColor: latestStateRef.current.noteColor,
+      noteTextSize: latestStateRef.current.noteTextSize,
+      noteRuledLines: latestStateRef.current.noteRuledLines,
+    });
+
+  const captureCurrentCodeDraft = () =>
+    getCodePayload({
+      title: latestStateRef.current.codeTitle,
+      code: latestStateRef.current.codeText,
+    });
+
+  const handleNoteConflict = useCallback(
+    (freshNote) => {
+      if (!freshNote) {
+        setNoteSaveStatus("error");
+        showToast("Note save failed", "error");
+        return false;
+      }
+
+      const localDraft = captureCurrentNoteDraft();
+      setNotes((prev) => replaceItemById(prev, freshNote));
+      setActiveNoteId(freshNote._id);
+      applyDraftToActiveNote(
+        getNoteDraft(freshNote, defaultNoteRuledLines),
+        getSavedAtLabel(freshNote),
+        { revision: getEntityRevision(freshNote) }
+      );
+      setNoteSaveStatus("error");
+      showToast(
+        "This note changed in another tab. Latest version loaded.",
+        "error",
+        "Restore Draft",
+        async () => {
+          setActiveNoteId(freshNote._id);
+          applyDraftToActiveNote(localDraft, getSavedAtLabel(freshNote), {
+            markSaved: false,
+            revision: getEntityRevision(freshNote),
+          });
+          setNoteSaveStatus("idle");
+        }
+      );
+      return false;
+    },
+    [applyDraftToActiveNote, defaultNoteRuledLines, showToast]
+  );
+
+  const handleCodeConflict = useCallback(
+    (freshCode) => {
+      if (!freshCode) {
+        setCodeSaveStatus("error");
+        showToast("Code save failed", "error");
+        return false;
+      }
+
+      const localDraft = captureCurrentCodeDraft();
+      setCodes((prev) => replaceItemById(prev, freshCode));
+      setActiveCodeId(freshCode._id);
+      applyDraftToActiveCode(getCodeDraft(freshCode), getSavedAtLabel(freshCode), {
+        revision: getEntityRevision(freshCode),
+      });
+      setCodeSaveStatus("error");
+      showToast(
+        "This code entry changed in another tab. Latest version loaded.",
+        "error",
+        "Restore Draft",
+        async () => {
+          setActiveCodeId(freshCode._id);
+          applyDraftToActiveCode(localDraft, getSavedAtLabel(freshCode), {
+            markSaved: false,
+            revision: getEntityRevision(freshCode),
+          });
+          setCodeSaveStatus("idle");
+        }
+      );
+      return false;
+    },
+    [applyDraftToActiveCode, showToast]
+  );
+
   const setNoteTitleValue = (value) => {
     setNoteTitle(value);
     if (noteSaveStatus !== "saving") {
@@ -204,7 +688,53 @@ export function useNotes(workspace, workspaceAccessToken) {
   };
 
   const setNoteContentValue = (value) => {
-    setNoteContent(value);
+    if (typeof value === "string") {
+      setNoteContent(value);
+      setNoteContentHtml(normalizeNoteHtml("", value));
+    } else {
+      const normalizedHtml = normalizeNoteHtml(
+        value?.html,
+        typeof value?.plainText === "string" ? value.plainText : ""
+      );
+      const plainText = extractPlainTextFromHtml(normalizedHtml);
+      setNoteContent(plainText);
+      setNoteContentHtml(normalizedHtml);
+    }
+    if (noteSaveStatus !== "saving") {
+      setNoteSaveStatus("idle");
+    }
+  };
+
+  const setNoteLanguageValue = (value) => {
+    setNoteLanguage(value ?? DEFAULT_NOTE_LANGUAGE);
+    if (noteSaveStatus !== "saving") {
+      setNoteSaveStatus("idle");
+    }
+  };
+
+  const setNoteFontStyleValue = (value) => {
+    setNoteFontStyle(value ?? DEFAULT_NOTE_FONT_STYLE);
+    if (noteSaveStatus !== "saving") {
+      setNoteSaveStatus("idle");
+    }
+  };
+
+  const setNoteColorValue = (value) => {
+    setNoteColor(normalizeNoteColor(value ?? DEFAULT_NOTE_COLOR));
+    if (noteSaveStatus !== "saving") {
+      setNoteSaveStatus("idle");
+    }
+  };
+
+  const setNoteTextSizeValue = (value) => {
+    setNoteTextSize(value ?? DEFAULT_NOTE_TEXT_SIZE);
+    if (noteSaveStatus !== "saving") {
+      setNoteSaveStatus("idle");
+    }
+  };
+
+  const setNoteRuledLinesValue = (value) => {
+    setNoteRuledLines(Boolean(value));
     if (noteSaveStatus !== "saving") {
       setNoteSaveStatus("idle");
     }
@@ -220,32 +750,41 @@ export function useNotes(workspace, workspaceAccessToken) {
         workspaceId,
         activeNoteId,
         {
-          title: noteTitle,
-          content: noteContent,
+          ...getNotePayload({
+            title: noteTitle,
+            content: noteContent,
+            contentHtml: noteContentHtml,
+            noteLanguage,
+            noteFontStyle,
+            noteColor,
+            noteTextSize,
+            noteRuledLines,
+          }),
+          revision: noteRevision,
         },
         workspaceAccessToken
       );
-      setNotes(data);
-
-      const updated = data.find((n) => n._id === activeNoteId);
-      if (updated) {
-        setNoteTitle(updated.title);
-        setNoteContent(updated.content);
-        setSavedNoteTitle(updated.title);
-        setSavedNoteContent(updated.content);
-        setLastNoteSavedAt(updated.updatedAt ?? new Date().toISOString());
-      } else {
-        setSavedNoteTitle(noteTitle);
-        setSavedNoteContent(noteContent);
-        setLastNoteSavedAt(new Date().toISOString());
+      const updated = data?.note;
+      if (!updated) {
+        throw new Error("Missing note payload");
       }
 
+      setNotes((prev) => replaceItemById(prev, updated));
+      applyDraftToActiveNote(
+        getNoteDraft(updated, defaultNoteRuledLines),
+        getSavedAtLabel(updated),
+        { revision: getEntityRevision(updated) }
+      );
       setNoteSaveStatus("saved");
       if (!silent) showToast("Saved note", "success");
+      broadcastWorkspaceMutation("note.updated", { noteId: updated._id });
       return true;
-    } catch {
+    } catch (error) {
+      if (error?.status === 409) {
+        return handleNoteConflict(error?.payload?.note);
+      }
+
       setNoteSaveStatus("error");
-      // Even when autosaving silently, surface failures so the user isn't confused.
       showToast("Note save failed", "error");
       return false;
     }
@@ -253,7 +792,7 @@ export function useNotes(workspace, workspaceAccessToken) {
 
   const saveNoteIfDirty = async (options = {}) => {
     if (!noteIsDirty) return true;
-    return await persistNote(options);
+    return persistNote(options);
   };
 
   const createNote = async () => {
@@ -261,18 +800,26 @@ export function useNotes(workspace, workspaceAccessToken) {
     if (!ok) return;
 
     try {
-      const data = await createNoteAPI(workspaceId, {}, workspaceAccessToken);
-      setNotes(data);
-      const created = data[data.length - 1];
-      if (created) {
-        setActiveNoteId(created._id);
-        setNoteTitle(created.title);
-        setNoteContent(created.content);
-        setSavedNoteTitle(created.title);
-        setSavedNoteContent(created.content);
-        setLastNoteSavedAt(created.updatedAt ?? created.createdAt ?? null);
+      const data = await createNoteAPI(
+        workspaceId,
+        { noteRuledLines: defaultNoteRuledLines },
+        workspaceAccessToken
+      );
+      const created = data?.note;
+      if (!created) {
+        throw new Error("Missing note payload");
       }
+
+      setNotes((prev) => [...prev, created]);
+      setActiveNoteId(created._id);
+      applyDraftToActiveNote(
+        getNoteDraft(created, defaultNoteRuledLines),
+        getSavedAtLabel(created),
+        { revision: getEntityRevision(created) }
+      );
+      setNoteSaveStatus("idle");
       showToast("Note created", "success");
+      broadcastWorkspaceMutation("note.created", { noteId: created._id });
     } catch {
       showToast("Create note failed", "error");
     }
@@ -285,12 +832,12 @@ export function useNotes(workspace, workspaceAccessToken) {
     if (!ok) return;
 
     setActiveNoteId(note._id);
-    setNoteTitle(note.title);
-    setNoteContent(note.content);
-    setSavedNoteTitle(note.title);
-    setSavedNoteContent(note.content);
+    applyDraftToActiveNote(
+      getNoteDraft(note, defaultNoteRuledLines),
+      getSavedAtLabel(note),
+      { revision: getEntityRevision(note) }
+    );
     setNoteSaveStatus("idle");
-    setLastNoteSavedAt(note.updatedAt ?? note.createdAt ?? null);
   };
 
   const saveNote = async () => {
@@ -300,39 +847,52 @@ export function useNotes(workspace, workspaceAccessToken) {
   const finishNote = async () => {
     const ok = await saveNoteIfDirty();
     if (!ok) return;
-    setActiveNoteId(null);
-    setNoteTitle("");
-    setNoteContent("");
-    setSavedNoteTitle("");
-    setSavedNoteContent("");
-    setLastNoteSavedAt(null);
+    clearActiveNoteDraft();
   };
 
   const togglePinNote = (id) => {
     setPinnedNoteIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+      prev.includes(id) ? prev.filter((value) => value !== id) : [...prev, id]
     );
   };
 
   const restoreNotes = async (items) => {
     if (!items || items.length === 0) return;
+
     try {
+      const createdNotes = [];
       for (const item of items) {
         const data = await createNoteAPI(
           workspaceId,
-          {
+          getNotePayload({
             title: item.note.title,
             content: item.note.content,
-          },
+            contentHtml: item.note.contentHtml,
+            noteLanguage: item.note.noteLanguage,
+            noteFontStyle: item.note.noteFontStyle,
+            noteColor: item.note.noteColor,
+            noteTextSize: item.note.noteTextSize,
+            noteRuledLines: item.note.noteRuledLines,
+          }),
           workspaceAccessToken
         );
-        setNotes(data);
-        const created = data[data.length - 1];
-        if (created && item.wasPinned) {
+
+        const created = data?.note;
+        if (!created) continue;
+
+        createdNotes.push(created);
+        setNotes((prev) => [...prev, created]);
+        if (item.wasPinned) {
           setPinnedNoteIds((prev) =>
             prev.includes(created._id) ? prev : [...prev, created._id]
           );
         }
+      }
+
+      if (createdNotes.length > 0) {
+        broadcastWorkspaceMutation("note.restored", {
+          noteIds: createdNotes.map((note) => note._id),
+        });
       }
       showToast(items.length === 1 ? "Note restored" : "Notes restored", "success");
     } catch {
@@ -341,53 +901,79 @@ export function useNotes(workspace, workspaceAccessToken) {
   };
 
   const renameNote = async (noteId, nextTitle) => {
-    const note = notes.find((n) => n._id === noteId);
-    if (!note) return;
-
     const ok = await saveNoteIfDirty({ silent: true });
     if (!ok) return;
 
-    const contentValue = noteId === activeNoteId ? noteContent : note.content ?? "";
+    const note = latestStateRef.current.notes.find((item) => item._id === noteId);
+    if (!note) return;
+
+    const isActiveNote = noteId === latestStateRef.current.activeNoteId;
+    const localDraft = isActiveNote
+      ? captureCurrentNoteDraft()
+      : getNotePayload({
+          title: nextTitle ?? "",
+          content: note.content ?? "",
+          contentHtml: note.contentHtml,
+          noteLanguage: note.noteLanguage,
+          noteFontStyle: note.noteFontStyle,
+          noteColor: note.noteColor,
+          noteTextSize: note.noteTextSize,
+          noteRuledLines: note.noteRuledLines,
+        });
+
     try {
       const data = await updateNoteAPI(
         workspaceId,
         noteId,
         {
-          title: nextTitle ?? "",
-          content: contentValue,
+          ...(isActiveNote
+            ? {
+                ...localDraft,
+                title: nextTitle ?? "",
+              }
+            : localDraft),
+          revision: isActiveNote
+            ? latestStateRef.current.noteRevision
+            : getEntityRevision(note),
         },
         workspaceAccessToken
       );
-      setNotes(data);
-      if (noteId === activeNoteId) {
-        const updated = data.find((n) => n._id === noteId);
-        if (updated) {
-          setNoteTitle(updated.title);
-          setNoteContent(updated.content);
-          setSavedNoteTitle(updated.title);
-          setSavedNoteContent(updated.content);
-          setLastNoteSavedAt(updated.updatedAt ?? new Date().toISOString());
-        }
+      const updated = data?.note;
+      if (!updated) {
+        throw new Error("Missing note payload");
+      }
+
+      setNotes((prev) => replaceItemById(prev, updated));
+      if (isActiveNote) {
+        setActiveNoteId(updated._id);
+        applyDraftToActiveNote(
+          getNoteDraft(updated, defaultNoteRuledLines),
+          getSavedAtLabel(updated),
+          { revision: getEntityRevision(updated) }
+        );
       }
       showToast("Title updated", "success");
-    } catch {
+      broadcastWorkspaceMutation("note.renamed", { noteId: updated._id });
+    } catch (error) {
+      if (error?.status === 409) {
+        handleNoteConflict(error?.payload?.note);
+        return;
+      }
       showToast("Rename failed", "error");
     }
   };
 
-  const deleteNotesFromState = (ids) => {
-    const idSet = new Set(ids);
-    setNotes((prev) => prev.filter((n) => !idSet.has(n._id)));
-    setPinnedNoteIds((prev) => prev.filter((id) => !idSet.has(id)));
-    if (idSet.has(activeNoteId)) {
-      setActiveNoteId(null);
-      setNoteTitle("");
-      setNoteContent("");
-      setSavedNoteTitle("");
-      setSavedNoteContent("");
-      setLastNoteSavedAt(null);
-    }
-  };
+  const deleteNotesFromState = useCallback(
+    (ids) => {
+      const idSet = new Set(ids);
+      setNotes((prev) => prev.filter((note) => !idSet.has(note._id)));
+      setPinnedNoteIds((prev) => prev.filter((id) => !idSet.has(id)));
+      if (ids.includes(latestStateRef.current.activeNoteId)) {
+        clearActiveNoteDraft();
+      }
+    },
+    [clearActiveNoteDraft]
+  );
 
   const deleteNotes = async (noteIds) => {
     const uniqueIds = Array.from(new Set(noteIds)).filter(Boolean);
@@ -396,7 +982,9 @@ export function useNotes(workspace, workspaceAccessToken) {
     const ok = await saveNoteIfDirty({ silent: true });
     if (!ok) return;
 
-    const notesToDelete = notes.filter((n) => uniqueIds.includes(n._id));
+    const notesToDelete = latestStateRef.current.notes.filter((note) =>
+      uniqueIds.includes(note._id)
+    );
     const restoreItems = notesToDelete.map((note) => ({
       note,
       wasPinned: pinnedNoteIds.includes(note._id),
@@ -407,6 +995,7 @@ export function useNotes(workspace, workspaceAccessToken) {
         await deleteNoteAPI(workspaceId, id, workspaceAccessToken);
       }
       deleteNotesFromState(uniqueIds);
+      broadcastWorkspaceMutation("note.deleted", { noteIds: uniqueIds });
 
       const message =
         uniqueIds.length === 1 ? "Note deleted" : `${uniqueIds.length} notes deleted`;
@@ -422,7 +1011,6 @@ export function useNotes(workspace, workspaceAccessToken) {
     await deleteNotes([noteId]);
   };
 
-  // Codes helpers
   const setCodeTitleValue = (value) => {
     setCodeTitle(value);
     if (codeSaveStatus !== "saving") {
@@ -447,32 +1035,33 @@ export function useNotes(workspace, workspaceAccessToken) {
         workspaceId,
         activeCodeId,
         {
-          title: codeTitle,
-          code: codeText,
+          ...getCodePayload({
+            title: codeTitle,
+            code: codeText,
+          }),
+          revision: codeRevision,
         },
         workspaceAccessToken
       );
-      setCodes(data);
-
-      const updated = data.find((c) => c._id === activeCodeId);
-      if (updated) {
-        setCodeTitle(updated.title);
-        setCodeText(updated.code);
-        setSavedCodeTitle(updated.title);
-        setSavedCodeText(updated.code);
-        setLastCodeSavedAt(updated.updatedAt ?? new Date().toISOString());
-      } else {
-        setSavedCodeTitle(codeTitle);
-        setSavedCodeText(codeText);
-        setLastCodeSavedAt(new Date().toISOString());
+      const updated = data?.code;
+      if (!updated) {
+        throw new Error("Missing code payload");
       }
 
+      setCodes((prev) => replaceItemById(prev, updated));
+      applyDraftToActiveCode(getCodeDraft(updated), getSavedAtLabel(updated), {
+        revision: getEntityRevision(updated),
+      });
       setCodeSaveStatus("saved");
       if (!silent) showToast("Saved code", "success");
+      broadcastWorkspaceMutation("code.updated", { codeId: updated._id });
       return true;
-    } catch {
+    } catch (error) {
+      if (error?.status === 409) {
+        return handleCodeConflict(error?.payload?.code);
+      }
+
       setCodeSaveStatus("error");
-      // Even when autosaving silently, surface failures so the user isn't confused.
       showToast("Code save failed", "error");
       return false;
     }
@@ -480,7 +1069,7 @@ export function useNotes(workspace, workspaceAccessToken) {
 
   const saveCodeIfDirty = async (options = {}) => {
     if (!codeIsDirty) return true;
-    return await persistCode(options);
+    return persistCode(options);
   };
 
   const createCode = async () => {
@@ -489,17 +1078,19 @@ export function useNotes(workspace, workspaceAccessToken) {
 
     try {
       const data = await createCodeAPI(workspaceId, {}, workspaceAccessToken);
-      setCodes(data);
-      const created = data[data.length - 1];
-      if (created) {
-        setActiveCodeId(created._id);
-        setCodeTitle(created.title);
-        setCodeText(created.code);
-        setSavedCodeTitle(created.title);
-        setSavedCodeText(created.code);
-        setLastCodeSavedAt(created.updatedAt ?? created.createdAt ?? null);
+      const created = data?.code;
+      if (!created) {
+        throw new Error("Missing code payload");
       }
+
+      setCodes((prev) => [...prev, created]);
+      setActiveCodeId(created._id);
+      applyDraftToActiveCode(getCodeDraft(created), getSavedAtLabel(created), {
+        revision: getEntityRevision(created),
+      });
+      setCodeSaveStatus("idle");
       showToast("Code created", "success");
+      broadcastWorkspaceMutation("code.created", { codeId: created._id });
     } catch {
       showToast("Create code failed", "error");
     }
@@ -512,12 +1103,10 @@ export function useNotes(workspace, workspaceAccessToken) {
     if (!ok) return;
 
     setActiveCodeId(entry._id);
-    setCodeTitle(entry.title);
-    setCodeText(entry.code);
-    setSavedCodeTitle(entry.title);
-    setSavedCodeText(entry.code);
+    applyDraftToActiveCode(getCodeDraft(entry), getSavedAtLabel(entry), {
+      revision: getEntityRevision(entry),
+    });
     setCodeSaveStatus("idle");
-    setLastCodeSavedAt(entry.updatedAt ?? entry.createdAt ?? null);
   };
 
   const saveCode = async () => {
@@ -527,23 +1116,20 @@ export function useNotes(workspace, workspaceAccessToken) {
   const finishCode = async () => {
     const ok = await saveCodeIfDirty();
     if (!ok) return;
-    setActiveCodeId(null);
-    setCodeTitle("");
-    setCodeText("");
-    setSavedCodeTitle("");
-    setSavedCodeText("");
-    setLastCodeSavedAt(null);
+    clearActiveCodeDraft();
   };
 
   const togglePinCode = (id) => {
     setPinnedCodeIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+      prev.includes(id) ? prev.filter((value) => value !== id) : [...prev, id]
     );
   };
 
   const restoreCodes = async (items) => {
     if (!items || items.length === 0) return;
+
     try {
+      const createdCodes = [];
       for (const item of items) {
         const data = await createCodeAPI(
           workspaceId,
@@ -553,13 +1139,23 @@ export function useNotes(workspace, workspaceAccessToken) {
           },
           workspaceAccessToken
         );
-        setCodes(data);
-        const created = data[data.length - 1];
-        if (created && item.wasPinned) {
+
+        const created = data?.code;
+        if (!created) continue;
+
+        createdCodes.push(created);
+        setCodes((prev) => [...prev, created]);
+        if (item.wasPinned) {
           setPinnedCodeIds((prev) =>
             prev.includes(created._id) ? prev : [...prev, created._id]
           );
         }
+      }
+
+      if (createdCodes.length > 0) {
+        broadcastWorkspaceMutation("code.restored", {
+          codeIds: createdCodes.map((entry) => entry._id),
+        });
       }
       showToast(items.length === 1 ? "Code restored" : "Codes restored", "success");
     } catch {
@@ -568,53 +1164,61 @@ export function useNotes(workspace, workspaceAccessToken) {
   };
 
   const renameCode = async (codeId, nextTitle) => {
-    const entry = codes.find((c) => c._id === codeId);
-    if (!entry) return;
-
     const ok = await saveCodeIfDirty({ silent: true });
     if (!ok) return;
 
-    const codeValue = codeId === activeCodeId ? codeText : entry.code ?? "";
+    const entry = latestStateRef.current.codes.find((item) => item._id === codeId);
+    if (!entry) return;
+
+    const isActiveCode = codeId === latestStateRef.current.activeCodeId;
+
     try {
       const data = await updateCodeAPI(
         workspaceId,
         codeId,
         {
           title: nextTitle ?? "",
-          code: codeValue,
+          code: isActiveCode ? latestStateRef.current.codeText : entry.code ?? "",
+          revision: isActiveCode
+            ? latestStateRef.current.codeRevision
+            : getEntityRevision(entry),
         },
         workspaceAccessToken
       );
-      setCodes(data);
-      if (codeId === activeCodeId) {
-        const updated = data.find((c) => c._id === codeId);
-        if (updated) {
-          setCodeTitle(updated.title);
-          setCodeText(updated.code);
-          setSavedCodeTitle(updated.title);
-          setSavedCodeText(updated.code);
-          setLastCodeSavedAt(updated.updatedAt ?? new Date().toISOString());
-        }
+      const updated = data?.code;
+      if (!updated) {
+        throw new Error("Missing code payload");
+      }
+
+      setCodes((prev) => replaceItemById(prev, updated));
+      if (isActiveCode) {
+        setActiveCodeId(updated._id);
+        applyDraftToActiveCode(getCodeDraft(updated), getSavedAtLabel(updated), {
+          revision: getEntityRevision(updated),
+        });
       }
       showToast("Title updated", "success");
-    } catch {
+      broadcastWorkspaceMutation("code.renamed", { codeId: updated._id });
+    } catch (error) {
+      if (error?.status === 409) {
+        handleCodeConflict(error?.payload?.code);
+        return;
+      }
       showToast("Rename failed", "error");
     }
   };
 
-  const deleteCodesFromState = (ids) => {
-    const idSet = new Set(ids);
-    setCodes((prev) => prev.filter((c) => !idSet.has(c._id)));
-    setPinnedCodeIds((prev) => prev.filter((id) => !idSet.has(id)));
-    if (idSet.has(activeCodeId)) {
-      setActiveCodeId(null);
-      setCodeTitle("");
-      setCodeText("");
-      setSavedCodeTitle("");
-      setSavedCodeText("");
-      setLastCodeSavedAt(null);
-    }
-  };
+  const deleteCodesFromState = useCallback(
+    (ids) => {
+      const idSet = new Set(ids);
+      setCodes((prev) => prev.filter((entry) => !idSet.has(entry._id)));
+      setPinnedCodeIds((prev) => prev.filter((id) => !idSet.has(id)));
+      if (ids.includes(latestStateRef.current.activeCodeId)) {
+        clearActiveCodeDraft();
+      }
+    },
+    [clearActiveCodeDraft]
+  );
 
   const deleteCodes = async (codeIds) => {
     const uniqueIds = Array.from(new Set(codeIds)).filter(Boolean);
@@ -623,10 +1227,12 @@ export function useNotes(workspace, workspaceAccessToken) {
     const ok = await saveCodeIfDirty({ silent: true });
     if (!ok) return;
 
-    const codesToDelete = codes.filter((c) => uniqueIds.includes(c._id));
-    const restoreItems = codesToDelete.map((code) => ({
-      code,
-      wasPinned: pinnedCodeIds.includes(code._id),
+    const codesToDelete = latestStateRef.current.codes.filter((entry) =>
+      uniqueIds.includes(entry._id)
+    );
+    const restoreItems = codesToDelete.map((entry) => ({
+      code: entry,
+      wasPinned: pinnedCodeIds.includes(entry._id),
     }));
 
     try {
@@ -634,6 +1240,7 @@ export function useNotes(workspace, workspaceAccessToken) {
         await deleteCodeAPI(workspaceId, id, workspaceAccessToken);
       }
       deleteCodesFromState(uniqueIds);
+      broadcastWorkspaceMutation("code.deleted", { codeIds: uniqueIds });
 
       const message =
         uniqueIds.length === 1 ? "Code deleted" : `${uniqueIds.length} codes deleted`;
@@ -661,22 +1268,31 @@ export function useNotes(workspace, workspaceAccessToken) {
     workspace?.workspaceName || workspace?.workspaceId || "";
 
   return {
-    // workspace
     workspaceDisplayName,
     isLoadingWorkspace,
     toast,
     dismissToast,
-    // notes
     notes,
     activeNoteId,
     noteTitle,
     noteContent,
+    noteContentHtml,
+    noteLanguage,
+    noteFontStyle,
+    noteColor,
+    noteTextSize,
+    noteRuledLines,
     noteIsDirty,
     noteSaveStatus,
     lastNoteSavedAt,
     pinnedNoteIds,
     setNoteTitle: setNoteTitleValue,
     setNoteContent: setNoteContentValue,
+    setNoteLanguage: setNoteLanguageValue,
+    setNoteFontStyle: setNoteFontStyleValue,
+    setNoteColor: setNoteColorValue,
+    setNoteTextSize: setNoteTextSizeValue,
+    setNoteRuledLines: setNoteRuledLinesValue,
     createNote,
     selectNote,
     saveNote,
@@ -686,7 +1302,6 @@ export function useNotes(workspace, workspaceAccessToken) {
     togglePinNote,
     deleteNote,
     deleteNotes,
-    // codes
     codes,
     activeCodeId,
     codeTitle,
@@ -706,7 +1321,6 @@ export function useNotes(workspace, workspaceAccessToken) {
     togglePinCode,
     deleteCode,
     deleteCodes,
-    // combined helpers
     saveWorkspaceIfDirty,
   };
 }

@@ -6,14 +6,49 @@ const express = require("express");
 const cors = require("cors");
 
 const connectDB = require("./db");
+const transliterationRoutes = require("./routes/transliterationRoutes");
 const workspaceRoutes = require("./routes/workspaceRoutes");
+const { createRateLimit } = require("./utils/rateLimit");
 
 const app = express();
 const clientDistPath = path.join(__dirname, "../client/dist");
 const hasBuiltClient = fs.existsSync(clientDistPath);
+const allowedOrigins = (process.env.CORS_ORIGIN || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
-app.use(cors());
-app.use(express.json());
+app.disable("x-powered-by");
+app.set("trust proxy", 1);
+
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  next();
+});
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error("Not allowed by CORS"));
+    },
+  })
+);
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || "1mb" }));
+app.use(
+  "/api",
+  createRateLimit({
+    windowMs: Number(process.env.API_RATE_LIMIT_WINDOW_MS) || 60_000,
+    max: Number(process.env.API_RATE_LIMIT_MAX) || 240,
+    keyPrefix: "api",
+  })
+);
+app.use("/api/transliteration", transliterationRoutes);
 app.use("/api/workspaces", workspaceRoutes);
 
 if (hasBuiltClient) {

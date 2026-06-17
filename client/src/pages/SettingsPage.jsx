@@ -1,26 +1,67 @@
 import { useEffect, useState } from "react";
 import { useWorkspace } from "../hooks/useWorkspace";
 
+function ToggleCard({
+  title,
+  description,
+  checked,
+  disabled,
+  onToggle,
+}) {
+  return (
+    <div className="panel-muted p-4 md:p-5 flex flex-col justify-between h-full min-h-[110px] transition duration-200 hover:shadow-[0_12px_24px_rgba(76,58,38,0.04)]">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-slate-900 leading-tight">{title}</p>
+          <p className="mt-2 text-xs leading-relaxed text-slate-500">{description}</p>
+        </div>
+
+        <button
+          type="button"
+          role="switch"
+          aria-checked={checked}
+          disabled={disabled}
+          onClick={onToggle}
+          className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition ${
+            checked
+              ? "border-[rgba(149,81,35,0.22)] bg-[linear-gradient(135deg,#c6753b_0%,#985225_100%)]"
+              : "border-[rgba(104,84,58,0.14)] bg-white/70"
+          } disabled:opacity-50`}
+        >
+          <span
+            className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
+              checked ? "translate-x-6" : "translate-x-1"
+            }`}
+          />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const {
     workspace,
-    renameWorkspace,
+    renameWorkspaceId,
+    updateWorkspaceTitle,
     updatePreferences,
     updateWorkspaceSecurity,
   } = useWorkspace();
-  const [draftName, setDraftName] = useState("");
-  const [isSavingPrefs, setIsSavingPrefs] = useState(false);
+  const [draftTitle, setDraftTitle] = useState("");
+  const [draftWorkspaceId, setDraftWorkspaceId] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
   const [nextPassword, setNextPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [savingIdentityField, setSavingIdentityField] = useState("");
   const [isSavingSecurity, setIsSavingSecurity] = useState(false);
   const [securityMessage, setSecurityMessage] = useState("");
   const [securityTone, setSecurityTone] = useState("info");
   const [securityAction, setSecurityAction] = useState("set");
 
   useEffect(() => {
-    setDraftName(workspace?.workspaceId ?? "");
-  }, [workspace?.workspaceId]);
+    setDraftTitle(workspace?.workspaceName ?? workspace?.workspaceId ?? "");
+    setDraftWorkspaceId(workspace?.workspaceId ?? "");
+  }, [workspace?.workspaceId, workspace?.workspaceName]);
 
   useEffect(() => {
     setCurrentPassword("");
@@ -39,6 +80,12 @@ export default function SettingsPage() {
   const isPasswordProtected = workspace?.isPasswordProtected ?? false;
   const isChangingPassword = securityAction === "change";
   const isRemovingPassword = securityAction === "remove";
+  const workspaceTitle = workspace?.workspaceName?.trim() || workspace?.workspaceId || "";
+  const normalizedDraftTitle =
+    draftTitle.trim() || draftWorkspaceId.trim() || workspace?.workspaceId || "";
+  const titleChanged = normalizedDraftTitle !== workspaceTitle;
+  const workspaceIdChanged =
+    draftWorkspaceId.trim() !== (workspace?.workspaceId ?? "");
   const shouldShowPasswordForm =
     !isPasswordProtected || isChangingPassword || isRemovingPassword;
 
@@ -47,13 +94,37 @@ export default function SettingsPage() {
       ? "border-rose-200 bg-rose-50 text-rose-700"
       : securityTone === "success"
       ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-      : "border-slate-200 bg-slate-50 text-slate-600";
+      : "border-[rgba(104,84,58,0.12)] bg-white/55 text-slate-600";
 
   const setPref = async (key, value) => {
     if (!workspace) return;
-    setIsSavingPrefs(true);
     await updatePreferences({ [key]: value });
-    setIsSavingPrefs(false);
+  };
+
+  const handleSaveTitle = async () => {
+    if (!workspace) return;
+    setSavingIdentityField("title");
+    const data = await updateWorkspaceTitle(draftTitle);
+    setSavingIdentityField("");
+
+    if (data) {
+      setDraftTitle(data.workspaceName ?? data.workspaceId ?? "");
+    }
+  };
+
+  const handleSaveWorkspaceId = async () => {
+    if (!workspace) return;
+    const nextId = draftWorkspaceId.trim();
+    if (nextId.length < 3) return;
+
+    setSavingIdentityField("id");
+    const data = await renameWorkspaceId(nextId);
+    setSavingIdentityField("");
+
+    if (data) {
+      setDraftWorkspaceId(data.workspaceId ?? nextId);
+      setDraftTitle(data.workspaceName ?? data.workspaceId ?? nextId);
+    }
   };
 
   const handleEnableOrChangeProtection = async () => {
@@ -134,127 +205,57 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="mx-auto grid w-full max-w-6xl gap-6 md:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
-      <div className="rounded-3xl border border-slate-200 bg-white/80 p-6 shadow-xl backdrop-blur">
-        <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-          Settings
-        </p>
-        <h2 className="mt-2 text-2xl font-semibold text-slate-900">
-          Preferences
-        </h2>
-        <p className="mt-3 text-slate-600">
-          These settings are saved inside your current workspace and will apply
-          the next time you open it.
-        </p>
-
-        <div className="mt-6 space-y-4 text-sm text-slate-600">
-          <div className="rounded-2xl border border-slate-200 bg-white p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="font-semibold text-slate-900">Auto-replace symbols</p>
-                <p className="mt-1 text-xs text-slate-500">
-                  Replaces sequences like -&gt;, &lt;=, and != with cleaner symbols while typing.
-                </p>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={autoReplaceEnabled}
-                disabled={!workspace || isSavingPrefs}
-                onClick={() => setPref("autoReplace", !autoReplaceEnabled)}
-                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition ${
-                  autoReplaceEnabled ? "bg-slate-900" : "bg-slate-200"
-                } disabled:opacity-50`}
-              >
-                <span
-                  className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
-                    autoReplaceEnabled ? "translate-x-6" : "translate-x-1"
-                  }`}
-                />
-              </button>
-            </div>
+    <div className="mx-auto grid w-full max-w-6xl gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+      <section className="panel p-6 md:p-8">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="max-w-2xl">
+            <p className="section-kicker">Settings</p>
+            <h1 className="font-display mt-3 text-4xl font-semibold text-slate-900 md:text-5xl">
+              Shape how this workspace feels
+            </h1>
+            <p className="mt-4 text-base leading-7 text-slate-600">
+              Preferences are saved inside the current workspace, so the next
+              time you reopen it the editor behaves the same way.
+            </p>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="font-semibold text-slate-900">Ruled lines in notes</p>
-                <p className="mt-1 text-xs text-slate-500">
-                  Shows notebook lines behind the note editor.
-                </p>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={ruledNotesEnabled}
-                disabled={!workspace || isSavingPrefs}
-                onClick={() => setPref("ruledNotes", !ruledNotesEnabled)}
-                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition ${
-                  ruledNotesEnabled ? "bg-slate-900" : "bg-slate-200"
-                } disabled:opacity-50`}
-              >
-                <span
-                  className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
-                    ruledNotesEnabled ? "translate-x-6" : "translate-x-1"
-                  }`}
-                />
-              </button>
-            </div>
-          </div>
+          <span className="ui-chip">
+            {workspace ? "Workspace loaded" : "Open a workspace first"}
+          </span>
+        </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="font-semibold text-slate-900">Confirm before delete</p>
-                <p className="mt-1 text-xs text-slate-500">
-                  Asks before deleting notes/codes from the list.
-                </p>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={confirmDeletes}
-                disabled={!workspace || isSavingPrefs}
-                onClick={() => setPref("confirmDeletes", !confirmDeletes)}
-                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition ${
-                  confirmDeletes ? "bg-slate-900" : "bg-slate-200"
-                } disabled:opacity-50`}
-              >
-                <span
-                  className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
-                    confirmDeletes ? "translate-x-6" : "translate-x-1"
-                  }`}
-                />
-              </button>
-            </div>
-          </div>
+        <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <ToggleCard
+            title="Auto-replace symbols"
+            description="Replace sequences like ->, <=, and != with cleaner symbols while typing."
+            checked={autoReplaceEnabled}
+            disabled={!workspace}
+            onToggle={() => setPref("autoReplace", !autoReplaceEnabled)}
+          />
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="font-semibold text-slate-900">Show autosave toasts</p>
-                <p className="mt-1 text-xs text-slate-500">
-                  Shows "Saved note/code" when switching items or leaving the workspace.
-                </p>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={showAutosaveToasts}
-                disabled={!workspace || isSavingPrefs}
-                onClick={() => setPref("showAutosaveToasts", !showAutosaveToasts)}
-                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition ${
-                  showAutosaveToasts ? "bg-slate-900" : "bg-slate-200"
-                } disabled:opacity-50`}
-              >
-                <span
-                  className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
-                    showAutosaveToasts ? "translate-x-6" : "translate-x-1"
-                  }`}
-                />
-              </button>
-            </div>
-          </div>
+          <ToggleCard
+            title="Ruled lines in notes"
+            description="Show notebook-style guide lines behind the note editor."
+            checked={ruledNotesEnabled}
+            disabled={!workspace}
+            onToggle={() => setPref("ruledNotes", !ruledNotesEnabled)}
+          />
+
+          <ToggleCard
+            title="Confirm before delete"
+            description="Ask before deleting notes or code entries from the sidebar."
+            checked={confirmDeletes}
+            disabled={!workspace}
+            onToggle={() => setPref("confirmDeletes", !confirmDeletes)}
+          />
+
+          <ToggleCard
+            title="Show autosave toasts"
+            description="Display save confirmations when switching items or leaving the workspace."
+            checked={showAutosaveToasts}
+            disabled={!workspace}
+            onToggle={() => setPref("showAutosaveToasts", !showAutosaveToasts)}
+          />
 
           {!workspace ? (
             <p className="text-sm text-slate-500">
@@ -262,70 +263,133 @@ export default function SettingsPage() {
             </p>
           ) : null}
         </div>
-      </div>
+
+      </section>
 
       <div className="space-y-6">
-        <div className="rounded-3xl border border-dashed border-slate-200 bg-white/60 p-6">
-          <h3 className="text-lg font-semibold text-slate-900">
-            Modify Workspace
-          </h3>
-          <p className="mt-2 text-sm text-slate-600">
-            Rename the current workspace ID. This changes how you open it.
+        <section className="panel-muted p-6">
+          <p className="section-kicker">Workspace Identity</p>
+          <h2 className="font-display mt-2 text-3xl font-semibold text-slate-900">
+            Title and reopen ID
+          </h2>
+          <p className="mt-3 text-sm leading-6 text-slate-600">
+            Keep the visible title polished inside the app, and keep the
+            workspace ID stable for opening it again later.
           </p>
-          <div className="mt-4 space-y-3">
-            <input
-              className="input"
-              value={draftName}
-              onChange={(event) => setDraftName(event.target.value)}
-              placeholder="New workspace ID"
-              disabled={!workspace}
-            />
-            <button
-              className="btn btn-primary"
-              disabled={!workspace}
-              onClick={() => renameWorkspace(draftName)}
-            >
-              Save Workspace ID
-            </button>
+
+          <div className="mt-5 space-y-3">
+            <div className="panel-inset p-5 md:p-5.5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">
+                    Workspace title
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    Shows in the navbar, sidebar, and editor shell.
+                  </p>
+                </div>
+                <span className="ui-chip">Visible in app</span>
+              </div>
+              <input
+                className="input mt-4"
+                value={draftTitle}
+                onChange={(event) => setDraftTitle(event.target.value)}
+                placeholder="Workspace title"
+                disabled={!workspace || savingIdentityField === "title"}
+              />
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs leading-5 text-slate-500">
+                  Leave it blank to fall back to the workspace ID.
+                </p>
+                <button
+                  className="btn btn-primary"
+                  disabled={
+                    !workspace ||
+                    savingIdentityField === "title" ||
+                    !titleChanged
+                  }
+                  onClick={handleSaveTitle}
+                >
+                  Save Title
+                </button>
+              </div>
+            </div>
+
+            <div className="panel-inset p-5 md:p-5.5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">
+                    Workspace ID
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    Type this on the entry screen when you want to reopen this workspace.
+                  </p>
+                </div>
+                <span className="ui-chip">Used at entry</span>
+              </div>
+              <input
+                className="input mt-4"
+                value={draftWorkspaceId}
+                onChange={(event) => setDraftWorkspaceId(event.target.value)}
+                placeholder="workspace-id"
+                disabled={!workspace || savingIdentityField === "id"}
+              />
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs leading-5 text-slate-500">
+                  Use at least 3 characters. Changing this affects how you reopen the workspace.
+                </p>
+                <button
+                  className="btn btn-primary"
+                  disabled={
+                    !workspace ||
+                    savingIdentityField === "id" ||
+                    draftWorkspaceId.trim().length < 3 ||
+                    !workspaceIdChanged
+                  }
+                  onClick={handleSaveWorkspaceId}
+                >
+                  Save ID
+                </button>
+              </div>
+            </div>
+
             {!workspace ? (
               <p className="text-sm text-slate-500">
-                Open a workspace first to edit its settings.
+                Open a workspace first to edit its title or ID.
               </p>
             ) : null}
           </div>
-        </div>
+        </section>
 
-        <div className="rounded-3xl border border-slate-200 bg-white/80 p-6 shadow-xl backdrop-blur">
-          <div className="flex items-center justify-between gap-3">
+        <section className="panel p-6 md:p-7.5">
+          <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                Security
-              </p>
-              <h3 className="mt-2 text-lg font-semibold text-slate-900">
+              <p className="section-kicker">Security</p>
+              <h2 className="font-display mt-2 text-3xl font-semibold text-slate-900">
                 Workspace Protection
-              </h3>
+              </h2>
             </div>
             <span
               className={`rounded-full px-3 py-1 text-xs font-semibold ${
                 isPasswordProtected
                   ? "bg-emerald-100 text-emerald-700"
-                  : "bg-slate-100 text-slate-600"
+                  : "bg-white/55 text-slate-600"
               }`}
             >
               {isPasswordProtected ? "Protected" : "Unlocked"}
             </span>
           </div>
 
-          <p className="mt-3 text-sm text-slate-600">
-            Add a password here if you want this whole workspace to require one
-            before it opens.
+          <p className="mt-4 text-sm leading-6 text-slate-600">
+            Add a password if this workspace needs a private entry point before
+            its content loads.
           </p>
 
           <div className="mt-5 space-y-3">
             {isPasswordProtected ? (
-              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-                Workspace password has been set. This workspace now asks for a
-                password before it opens.
+              <div className="rounded-[1.35rem] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                Workspace password has been set. Opening this workspace now
+                requires a password.
               </div>
             ) : null}
 
@@ -380,9 +444,9 @@ export default function SettingsPage() {
                   </>
                 ) : null}
 
-                <p className="text-xs text-slate-500">
+                <p className="text-xs leading-5 text-slate-500">
                   {isRemovingPassword
-                    ? "Enter the current password to remove workspace protection."
+                    ? "Enter the current password to remove protection."
                     : "Use at least 4 characters. After protection is enabled, opening this workspace will require the password."}
                 </p>
               </>
@@ -390,13 +454,13 @@ export default function SettingsPage() {
 
             {securityMessage ? (
               <div
-                className={`rounded-2xl border px-3 py-2 text-sm ${securityMessageClass}`}
+                className={`rounded-[1.35rem] border px-4 py-3 text-sm ${securityMessageClass}`}
               >
                 {securityMessage}
               </div>
             ) : null}
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 pt-1">
               {isPasswordProtected ? (
                 <>
                   {securityAction === "idle" ? (
@@ -474,7 +538,7 @@ export default function SettingsPage() {
               </p>
             ) : null}
           </div>
-        </div>
+        </section>
       </div>
     </div>
   );

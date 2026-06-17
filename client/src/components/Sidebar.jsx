@@ -1,4 +1,34 @@
 import { useEffect, useMemo, useState } from "react";
+import { useAppFeedback } from "../context/AppFeedbackContext.jsx";
+import SidebarSortSelect from "./SidebarSortSelect.jsx";
+
+function formatDateLabel(value) {
+  if (!value) return "Recently updated";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Recently updated";
+  return date.toLocaleDateString([], {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+const SORT_OPTIONS = [
+  {
+    value: "updated",
+    label: "Recently Updated",
+    description: "Show the most recently edited items first.",
+  },
+  {
+    value: "created",
+    label: "Newest First",
+    description: "Bring the most recently created items to the top.",
+  },
+  {
+    value: "title",
+    label: "Title A-Z",
+    description: "Keep the library ordered alphabetically.",
+  },
+];
 
 export default function Sidebar({
   workspace,
@@ -12,6 +42,7 @@ export default function Sidebar({
   isCodeDirty,
   pinnedNoteIds,
   pinnedCodeIds,
+  onCollapse,
   onCreateNote,
   onCreateCode,
   onSelectNote,
@@ -26,7 +57,8 @@ export default function Sidebar({
   onDeleteCodes,
   onDeleteWorkspace,
 }) {
-  const [listMode, setListMode] = useState("notes"); // notes | codes
+  const { confirm } = useAppFeedback();
+  const [listMode, setListMode] = useState("notes");
   const [editingId, setEditingId] = useState(null);
   const [draftTitle, setDraftTitle] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
@@ -38,6 +70,7 @@ export default function Sidebar({
   const pinnedIds = listMode === "notes" ? pinnedNoteIds : pinnedCodeIds;
   const activeId = listMode === "notes" ? activeNoteId : activeCodeId;
   const activeIsDirty = listMode === "notes" ? isDirty : isCodeDirty;
+  const pinnedSet = useMemo(() => new Set(pinnedIds ?? []), [pinnedIds]);
 
   useEffect(() => {
     setSelectedIds((prev) =>
@@ -51,14 +84,6 @@ export default function Sidebar({
     setSelectedIds([]);
     setSearchTerm("");
   }, [listMode]);
-
-  const pinnedSet = useMemo(() => new Set(pinnedIds ?? []), [pinnedIds]);
-
-  const truncateTitle = (text, max = 5) => {
-    const value = (text ?? "").trim();
-    if (value.length <= max) return value || "Untitled";
-    return `${value.slice(0, max)}...`;
-  };
 
   const visibleItems = useMemo(() => {
     const normalized = searchTerm.trim().toLowerCase();
@@ -118,14 +143,23 @@ export default function Sidebar({
 
   const toggleSelection = (id) => {
     setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+      prev.includes(id) ? prev.filter((value) => value !== id) : [...prev, id]
     );
   };
 
   const deleteSelected = async () => {
     if (selectedIds.length === 0) return;
     if (confirmDeletes) {
-      const ok = window.confirm(`Delete ${selectedIds.length} selected ${listMode}?`);
+      const ok = await confirm({
+        title: `Delete ${selectedIds.length} selected ${listMode}?`,
+        message:
+          listMode === "notes"
+            ? "The selected notes will be removed from this workspace."
+            : "The selected code entries will be removed from this workspace.",
+        confirmLabel: "Delete selected",
+        cancelLabel: "Keep items",
+        tone: "danger",
+      });
       if (!ok) return;
     }
     if (listMode === "notes") {
@@ -136,292 +170,408 @@ export default function Sidebar({
     setSelectedIds([]);
   };
 
-  const placeholder =
-    listMode === "notes" ? "Search notes" : "Search code";
+  const placeholder = listMode === "notes" ? "Search notes" : "Search code";
+  const emptyLabel =
+    items.length === 0
+      ? `No ${listMode} yet.`
+      : "No matching results. Try a different keyword.";
+  const itemCountLabel = `${listMode === "notes" ? notes.length : codes.length} in view`;
+  const sortLabel =
+    sortKey === "updated"
+      ? "Recently updated"
+      : sortKey === "created"
+      ? "Newest first"
+      : "Title A-Z";
+  const workspaceTitle = workspace.workspaceName?.trim() || workspace.workspaceId;
+  const workspaceIdLabel = workspace.workspaceId;
 
   return (
-    <div className="flex h-full w-full flex-col gap-4 rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-xl backdrop-blur">
-      <div className="space-y-1">
-        <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-          Workspace
-        </p>
-        <h3
-          className="truncate text-lg font-semibold text-slate-900"
-          title={workspace.workspaceName || workspace.workspaceId}
-        >
-          {workspace.workspaceName || workspace.workspaceId}
-        </h3>
-      </div>
+    <div className="motion-slide-left-in panel flex h-full w-full flex-col gap-4 p-4 md:py-5 md:pl-5 md:pr-7">
+      <div className="min-w-0">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="section-kicker">Workspace Library</p>
+            <h3
+              className="truncate text-[1.6rem] font-semibold tracking-[-0.03em] text-slate-900"
+              title={workspaceTitle}
+            >
+              {workspaceTitle}
+            </h3>
+            <p className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-400">
+              Workspace ID {workspaceIdLabel}
+            </p>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              One place for drafts, snippets, and the next thing you need to reopen fast.
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <span className="ui-chip">{itemCountLabel}</span>
+            {onCollapse ? (
+              <button
+                type="button"
+                className="icon-button hidden md:grid h-9 w-9"
+                onClick={onCollapse}
+                title="Collapse sidebar list"
+                aria-label="Collapse sidebar list"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M15 18l-6-6 6-6" />
+                </svg>
+              </button>
+            ) : null}
+          </div>
+        </div>
 
-      <div className="flex flex-wrap gap-2">
-        <button
-          className="btn btn-primary"
-          onClick={() => {
-            setListMode("notes");
-            onCreateNote();
-          }}
-          disabled={!canInteract}
-        >
-          New Note
-        </button>
-        <button
-          className="btn btn-soft"
-          onClick={() => {
-            setListMode("codes");
-            onCreateCode();
-          }}
-          disabled={!canInteract}
-        >
-          New Code
-        </button>
-        <button
-          className="btn btn-danger"
-          onClick={deleteSelected}
-          disabled={!canInteract || selectedIds.length === 0}
-        >
-          Delete Selected {selectedIds.length > 0 ? `(${selectedIds.length})` : ""}
-        </button>
-        <button className="btn btn-soft" onClick={onDeleteWorkspace} disabled={!canInteract}>
-          Delete Workspace
-        </button>
-      </div>
-
-      <div className="flex items-center gap-2">
-        <button
-          className={`btn flex-1 ${listMode === "notes" ? "btn-primary" : "btn-ghost"}`}
-          onClick={() => setListMode("notes")}
-          disabled={!canInteract}
-        >
-          Notes
-        </button>
-        <button
-          className={`btn flex-1 ${listMode === "codes" ? "btn-primary" : "btn-ghost"}`}
-          onClick={() => setListMode("codes")}
-          disabled={!canInteract}
-        >
-          Codes
-        </button>
-      </div>
-
-      <div className="space-y-2">
-        <input
-          className="input"
-          value={searchTerm}
-          onChange={(event) => setSearchTerm(event.target.value)}
-          placeholder={placeholder}
-        />
-
-        <div>
-          <label className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
-            Sort
-          </label>
-          <select
-            className="input mt-1"
-            value={sortKey}
-            onChange={(event) => setSortKey(event.target.value)}
-          >
-            <option value="updated">Recently updated</option>
-            <option value="created">Newest first</option>
-            <option value="title">Title A-Z</option>
-          </select>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <span className="ui-chip">{notes.length} notes</span>
+          <span className="ui-chip">{codes.length} code</span>
+          <span className="ui-chip">{sortLabel}</span>
+          {selectedIds.length > 0 ? (
+            <span className="ui-chip">{selectedIds.length} selected</span>
+          ) : null}
         </div>
       </div>
 
-      <ul className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-        {isLoadingNotes ? (
-          <li className="rounded-2xl border border-dashed border-slate-200 p-3 text-sm text-slate-500">
-            Loading...
-          </li>
-        ) : visibleItems.length === 0 ? (
-          <li className="rounded-2xl border border-dashed border-slate-200 p-3 text-sm text-slate-500">
-            {items.length === 0 ? `No ${listMode} yet.` : "No matching results."}
-          </li>
-        ) : (
-          visibleItems.map((item) => {
+      <div className="panel-inset p-3.5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="rounded-full border border-[rgba(104,84,58,0.14)] bg-white/45 p-1">
+            <div className="grid grid-cols-2 gap-1">
+              <button
+                className={`rounded-full px-4 py-2 text-sm font-semibold transition library-tab-btn ${
+                  listMode === "notes"
+                    ? "active bg-[linear-gradient(135deg,#c6753b_0%,#985225_100%)] text-white shadow-[0_14px_28px_rgba(149,81,35,0.22)]"
+                    : "text-slate-700 hover:bg-white/70"
+                }`}
+                onClick={() => setListMode("notes")}
+                disabled={!canInteract}
+              >
+                Notes
+              </button>
+              <button
+                className={`rounded-full px-4 py-2 text-sm font-semibold transition library-tab-btn ${
+                  listMode === "codes"
+                    ? "active bg-[linear-gradient(135deg,#c6753b_0%,#985225_100%)] text-white shadow-[0_14px_28px_rgba(149,81,35,0.22)]"
+                    : "text-slate-700 hover:bg-white/70"
+                }`}
+                onClick={() => setListMode("codes")}
+                disabled={!canInteract}
+              >
+                Code
+              </button>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              className="btn btn-primary px-4"
+              onClick={() => {
+                setListMode("notes");
+                onCreateNote();
+              }}
+              disabled={!canInteract}
+            >
+              New Note
+            </button>
+            <button
+              className="btn btn-soft px-4"
+              onClick={() => {
+                setListMode("codes");
+                onCreateCode();
+              }}
+              disabled={!canInteract}
+            >
+              New Code
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_150px]">
+          <input
+            className="input"
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder={placeholder}
+          />
+
+          <SidebarSortSelect
+            label="Sort Library"
+            value={sortKey}
+            options={SORT_OPTIONS}
+            onChange={setSortKey}
+            disabled={!canInteract}
+          />
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs uppercase tracking-[0.18em] text-slate-400">
+            Pinned entries stay at the top of the list
+          </p>
+          <button
+            className="btn btn-danger px-4 py-2 text-xs"
+            onClick={deleteSelected}
+            disabled={!canInteract || selectedIds.length === 0}
+            title="Delete selected items"
+          >
+            Delete Selected {selectedIds.length > 0 ? `(${selectedIds.length})` : ""}
+          </button>
+        </div>
+      </div>
+
+      <div className="panel-inset min-h-0 flex-1 overflow-hidden p-2">
+        <ul className="motion-stagger h-full space-y-2 overflow-y-auto pr-1">
+          {isLoadingNotes ? (
+            <li className="panel-muted p-4 text-sm text-slate-500">Loading...</li>
+          ) : visibleItems.length === 0 ? (
+            <li className="panel-muted p-4 text-sm text-slate-500">{emptyLabel}</li>
+          ) : (
+            visibleItems.map((item) => {
             const isActive = item._id === activeId;
             const showDirty = isActive && activeIsDirty;
             const isPinned = pinnedSet.has(item._id);
+            const body = listMode === "notes" ? item.content ?? "" : item.code ?? "";
+            const preview = body.replace(/\s+/g, " ").trim() || "No preview yet.";
 
             return (
               <li
                 key={item._id}
-                className={`group relative flex min-h-[44px] w-full items-center gap-2 rounded-2xl border px-3 py-2 transition ${
+                className={`motion-soft-pop relative overflow-hidden rounded-[1.5rem] border p-4 md:p-4.5 transition library-item ${
                   isActive
-                    ? "border-slate-900/10 bg-slate-900/5"
-                    : "border-transparent hover:border-slate-200 hover:bg-white/80"
+                    ? "library-item-active border-[rgba(188,116,65,0.12)] bg-[linear-gradient(135deg,rgba(242,218,193,0.22)_0%,rgba(255,255,255,0.78)_100%)] shadow-[0_12px_28px_rgba(149,81,35,0.08)]"
+                    : "border-transparent bg-white/35 hover:border-[rgba(104,84,58,0.12)] hover:bg-white/60"
                 }`}
               >
                 {isActive ? (
                   <span
                     aria-hidden="true"
-                    className="absolute left-1 top-2 bottom-2 w-1 rounded-full bg-slate-900/40"
+                    className="absolute left-0 top-4 bottom-4 w-1 rounded-r-full bg-[var(--tp-accent)]"
                   />
                 ) : null}
-                <input
-                  type="checkbox"
-                  checked={selectedIds.includes(item._id)}
-                  onChange={() => toggleSelection(item._id)}
-                  disabled={!canInteract}
-                  className="h-4 w-4 rounded border-slate-300 text-slate-900"
-                />
 
-                {editingId === item._id ? (
-                  <div className="flex flex-1 items-center gap-2">
-                    <input
-                      value={draftTitle}
-                      onChange={(event) => setDraftTitle(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          void commitEditing(item);
-                        }
-                        if (event.key === "Escape") {
-                          event.preventDefault();
-                          cancelEditing();
-                        }
-                      }}
-                      placeholder="Untitled"
-                      className="input h-9 flex-1"
-                      disabled={!canInteract}
-                    />
-                    <button
-                      className="btn btn-primary shrink-0 whitespace-nowrap px-2 py-1 text-xs"
-                      onClick={() => commitEditing(item)}
-                      disabled={!canInteract}
-                    >
-                      Save
-                    </button>
-                    <button
-                      className="btn btn-ghost shrink-0 whitespace-nowrap px-2 py-1 text-xs"
-                      onClick={cancelEditing}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                ) : (
-                  <span
-                    onClick={() => {
-                      if (listMode === "notes") {
-                        onSelectNote(item);
-                      } else {
-                        onSelectCode(item);
-                      }
-                    }}
-                    title={item.title || "Untitled"}
-                    className={`min-w-0 flex flex-1 cursor-pointer items-center gap-2 text-sm ${
-                      isActive ? "font-semibold text-slate-900" : "text-slate-700"
-                    }`}
-                  >
-                    <span className="truncate">{truncateTitle(item.title)}</span>
-                    {showDirty ? (
-                      <span title="Unsaved changes" className="text-slate-900">
-                        *
-                      </span>
-                    ) : null}
-                    {isPinned ? <span className="pill">Pinned</span> : null}
-                  </span>
-                )}
+                <div className="flex items-start gap-4">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(item._id)}
+                    onChange={() => toggleSelection(item._id)}
+                    disabled={!canInteract}
+                    className="mt-1 h-4 w-4 rounded border-slate-300 text-slate-900"
+                  />
 
-                {editingId === item._id ? null : (
-                  <div className="flex shrink-0 items-center gap-1">
-                    <button
-                      className="grid h-9 w-9 place-items-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 disabled:opacity-50"
-                      onClick={() => startEditing(item)}
-                      disabled={!canInteract}
-                      title="Rename"
-                      aria-label="Rename"
-                      type="button"
-                    >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
+                  {editingId === item._id ? (
+                    <div className="flex min-w-0 flex-1 flex-col gap-2">
+                      <input
+                        value={draftTitle}
+                        onChange={(event) => setDraftTitle(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            void commitEditing(item);
+                          }
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            cancelEditing();
+                          }
+                        }}
+                        placeholder="Untitled"
+                        className="input"
+                        disabled={!canInteract}
+                      />
+
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          className="btn btn-primary px-3 py-2 text-xs"
+                          onClick={() => commitEditing(item)}
+                          disabled={!canInteract}
+                        >
+                          Save
+                        </button>
+                        <button
+                          className="btn btn-ghost px-3 py-2 text-xs"
+                          onClick={cancelEditing}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (listMode === "notes") {
+                            onSelectNote(item);
+                          } else {
+                            onSelectCode(item);
+                          }
+                        }}
+                        title={item.title || "Untitled"}
+                        className="min-w-0 flex-1 text-left"
                       >
-                        <path d="M12 20h9" />
-                        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
-                      </svg>
-                    </button>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p
+                            className={`truncate text-sm ${
+                              isActive
+                                ? "font-semibold text-slate-900"
+                                : "font-semibold text-slate-800"
+                            }`}
+                          >
+                            {item.title?.trim() || "Untitled"}
+                          </p>
+                          {showDirty ? (
+                            <span
+                              className="h-2 w-2 rounded-full bg-[var(--tp-accent)]"
+                              title="Unsaved changes"
+                            />
+                          ) : null}
+                          {isPinned ? <span className="pill">Pinned</span> : null}
+                        </div>
+                        <p className="mt-2.5 max-h-12 overflow-hidden text-sm leading-6 text-slate-500">
+                          {preview}
+                        </p>
+                        <p className="mt-4 text-xs uppercase tracking-[0.18em] text-slate-400">
+                          {formatDateLabel(item.updatedAt)}
+                        </p>
+                      </button>
 
-                    <button
-                      className="grid h-9 w-9 place-items-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 disabled:opacity-50"
-                      onClick={() => {
-                        if (listMode === "notes") {
-                          onTogglePin(item._id);
-                        } else {
-                          onTogglePinCode(item._id);
-                        }
-                      }}
-                      disabled={!canInteract}
-                      title={isPinned ? "Unpin" : "Pin"}
-                      aria-label={isPinned ? "Unpin" : "Pin"}
-                      type="button"
-                    >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
-                      >
-                        <path d="M12 17v5" />
-                        <path d="M9 3h6l1 7 2 2v2H6v-2l2-2 1-7z" />
-                      </svg>
-                    </button>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <button
+                          className="icon-button h-9 w-9"
+                          onClick={() => startEditing(item)}
+                          disabled={!canInteract}
+                          title="Rename"
+                          aria-label="Rename"
+                          type="button"
+                        >
+                          <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                          >
+                            <path d="M12 20h9" />
+                            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+                          </svg>
+                        </button>
 
-                    <button
-                      className="grid h-9 w-9 place-items-center rounded-full text-rose-600 transition hover:bg-rose-50 hover:text-rose-700 disabled:opacity-50"
-                    onClick={() => {
-                      const label = item.title ? `"${item.title}"` : "this item";
-                      if (confirmDeletes) {
-                        const ok = window.confirm(`Delete ${label}?`);
-                        if (!ok) return;
-                      }
-                      if (listMode === "notes") {
-                        onDeleteNote(item._id);
-                      } else {
-                        onDeleteCode(item._id);
-                      }
-                      }}
-                      disabled={!canInteract}
-                      title="Delete"
-                      aria-label="Delete"
-                      type="button"
-                    >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
-                      >
-                        <path d="M3 6h18" />
-                        <path d="M8 6V4h8v2" />
-                        <path d="M19 6l-1 14H6L5 6" />
-                        <path d="M10 11v6" />
-                        <path d="M14 11v6" />
-                      </svg>
-                    </button>
-                  </div>
-                )}
+                        <button
+                          className="icon-button h-9 w-9"
+                          onClick={() => {
+                            if (listMode === "notes") {
+                              onTogglePin(item._id);
+                            } else {
+                              onTogglePinCode(item._id);
+                            }
+                          }}
+                          disabled={!canInteract}
+                          title={isPinned ? "Unpin" : "Pin"}
+                          aria-label={isPinned ? "Unpin" : "Pin"}
+                          type="button"
+                        >
+                          <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                          >
+                            <path d="M12 17v5" />
+                            <path d="M9 3h6l1 7 2 2v2H6v-2l2-2 1-7z" />
+                          </svg>
+                        </button>
+
+                        <button
+                          className="grid h-9 w-9 place-items-center rounded-full text-rose-600 transition hover:bg-rose-50 hover:text-rose-700 disabled:opacity-50"
+                          onClick={async () => {
+                            const label = item.title ? `"${item.title}"` : "this item";
+                            if (confirmDeletes) {
+                              const ok = await confirm({
+                                title: `Delete ${label}?`,
+                                message:
+                                  listMode === "notes"
+                                    ? "This note will be removed from the workspace."
+                                    : "This code entry will be removed from the workspace.",
+                                confirmLabel: "Delete",
+                                cancelLabel: "Keep it",
+                                tone: "danger",
+                              });
+                              if (!ok) return;
+                            }
+                            if (listMode === "notes") {
+                              onDeleteNote(item._id);
+                            } else {
+                              onDeleteCode(item._id);
+                            }
+                          }}
+                          disabled={!canInteract}
+                          title="Delete"
+                          aria-label="Delete"
+                          type="button"
+                        >
+                          <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                          >
+                            <path d="M3 6h18" />
+                            <path d="M8 6V4h8v2" />
+                            <path d="M19 6l-1 14H6L5 6" />
+                            <path d="M10 11v6" />
+                            <path d="M14 11v6" />
+                          </svg>
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
               </li>
             );
-          })
-        )}
-      </ul>
+            })
+          )}
+        </ul>
+      </div>
+
+      <div className="grid gap-3 border-t border-[rgba(104,84,58,0.12)] pt-3 md:pr-1">
+        <div>
+          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+            Workspace-wide action
+          </p>
+          <p className="mt-1 text-sm text-slate-500">
+            Remove the entire workspace only when you are done with everything inside it.
+          </p>
+        </div>
+        <button
+          className="btn btn-danger min-w-0 w-full justify-center px-4"
+          onClick={() => {
+            void onDeleteWorkspace();
+          }}
+          disabled={!canInteract}
+        >
+          Delete Workspace
+        </button>
+      </div>
     </div>
   );
 }

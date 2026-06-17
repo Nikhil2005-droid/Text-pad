@@ -12,6 +12,24 @@ const {
   verifyWorkspacePassword,
 } = require("../utils/workspaceSecurity");
 
+const NOTE_COLOR_REGEX = /^#([0-9a-fA-F]{6})$/;
+const NOTE_LANGUAGE_VALUES = [
+  "english",
+  "telugu",
+  "hindi",
+  "tamil",
+  "malayalam",
+];
+const NOTE_FONT_STYLE_VALUES = ["literary", "editorial", "modern"];
+const NOTE_TEXT_SIZE_VALUES = ["compact", "comfortable", "large", "grand"];
+const DEFAULT_NOTE_APPEARANCE = {
+  noteLanguage: "english",
+  noteFontStyle: "literary",
+  noteColor: "#fff8ee",
+  noteTextSize: "comfortable",
+  noteRuledLines: true,
+};
+
 function normalizeWorkspaceId(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -31,6 +49,78 @@ function getWorkspaceResponseAccessToken(workspaceId, existingAccessToken) {
   }
 
   return createWorkspaceAccessToken(workspaceId);
+}
+
+function normalizeNoteAppearance(input = {}) {
+  const normalized = {};
+
+  if (
+    typeof input.noteLanguage === "string" &&
+    NOTE_LANGUAGE_VALUES.includes(input.noteLanguage)
+  ) {
+    normalized.noteLanguage = input.noteLanguage;
+  }
+
+  if (
+    typeof input.noteFontStyle === "string" &&
+    NOTE_FONT_STYLE_VALUES.includes(input.noteFontStyle)
+  ) {
+    normalized.noteFontStyle = input.noteFontStyle;
+  }
+
+  if (
+    typeof input.noteColor === "string" &&
+    NOTE_COLOR_REGEX.test(input.noteColor.trim())
+  ) {
+    normalized.noteColor = input.noteColor.trim().toLowerCase();
+  }
+
+  if (
+    typeof input.noteTextSize === "string" &&
+    NOTE_TEXT_SIZE_VALUES.includes(input.noteTextSize)
+  ) {
+    normalized.noteTextSize = input.noteTextSize;
+  }
+
+  if (typeof input.noteRuledLines === "boolean") {
+    normalized.noteRuledLines = input.noteRuledLines;
+  }
+
+  return normalized;
+}
+
+function normalizeRevision(value) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function withNormalizedRevision(entry) {
+  if (!entry) return null;
+  const data =
+    typeof entry.toObject === "function" ? entry.toObject() : { ...entry };
+
+  return {
+    ...data,
+    revision: Number.isInteger(data?.revision) ? data.revision : 0,
+  };
+}
+
+function buildRevisionMatch(id, revision) {
+  if (revision === 0) {
+    return {
+      _id: id,
+      $or: [{ revision: 0 }, { revision: { $exists: false } }],
+    };
+  }
+
+  return {
+    _id: id,
+    revision,
+  };
 }
 
 async function requireWorkspaceAccess(req, res, next) {
@@ -187,17 +277,38 @@ router.patch("/:workspaceId", async (req, res) => {
     }
 
     if (preferences && typeof preferences === "object") {
-      const allowedPreferences = [
+      const booleanPreferences = [
         "autoReplace",
         "ruledNotes",
         "confirmDeletes",
         "showAutosaveToasts",
       ];
+      const enumPreferences = {
+        noteLanguage: NOTE_LANGUAGE_VALUES,
+        noteFontStyle: NOTE_FONT_STYLE_VALUES,
+        codeFontStyle: ["studio", "technical", "clean"],
+      };
 
-      for (const key of allowedPreferences) {
+      for (const key of booleanPreferences) {
         if (typeof preferences[key] === "boolean") {
           workspace.preferences[key] = preferences[key];
         }
+      }
+
+      for (const [key, allowedValues] of Object.entries(enumPreferences)) {
+        if (
+          typeof preferences[key] === "string" &&
+          allowedValues.includes(preferences[key])
+        ) {
+          workspace.preferences[key] = preferences[key];
+        }
+      }
+
+      if (
+        typeof preferences.noteColor === "string" &&
+        NOTE_COLOR_REGEX.test(preferences.noteColor.trim())
+      ) {
+        workspace.preferences.noteColor = preferences.noteColor.trim().toLowerCase();
       }
     }
 
@@ -287,7 +398,8 @@ router.patch("/:workspaceId", async (req, res) => {
  */
 router.post("/:workspaceId/notes", async (req, res) => {
   try {
-    const { title, content } = req.body;
+    const { title, content, contentHtml } = req.body ?? {};
+    const noteAppearance = normalizeNoteAppearance(req.body ?? {});
 
     const workspace = await Workspace.findOneAndUpdate(
       { workspaceId: req.params.workspaceId },
@@ -296,6 +408,20 @@ router.post("/:workspaceId/notes", async (req, res) => {
           notes: {
             title,
             content,
+            contentHtml,
+            noteLanguage:
+              noteAppearance.noteLanguage ?? DEFAULT_NOTE_APPEARANCE.noteLanguage,
+            noteFontStyle:
+              noteAppearance.noteFontStyle ??
+              DEFAULT_NOTE_APPEARANCE.noteFontStyle,
+            noteColor:
+              noteAppearance.noteColor ?? DEFAULT_NOTE_APPEARANCE.noteColor,
+            noteTextSize:
+              noteAppearance.noteTextSize ?? DEFAULT_NOTE_APPEARANCE.noteTextSize,
+            noteRuledLines:
+              noteAppearance.noteRuledLines ??
+              DEFAULT_NOTE_APPEARANCE.noteRuledLines,
+            revision: 0,
             createdAt: new Date(),
             updatedAt: new Date(),
           },
@@ -308,7 +434,8 @@ router.post("/:workspaceId/notes", async (req, res) => {
       return res.status(404).json({ message: "Workspace not found" });
     }
 
-    res.json(workspace.notes);
+    const createdNote = workspace.notes[workspace.notes.length - 1];
+    res.status(201).json({ note: withNormalizedRevision(createdNote) });
   } catch (err) {
     console.error("Add note error:", err);
     res.status(500).json({ message: "Server error" });
@@ -321,7 +448,7 @@ router.post("/:workspaceId/notes", async (req, res) => {
  */
 router.post("/:workspaceId/codes", async (req, res) => {
   try {
-    const { title, code } = req.body;
+    const { title, code } = req.body ?? {};
 
     const workspace = await Workspace.findOneAndUpdate(
       { workspaceId: req.params.workspaceId },
@@ -330,6 +457,7 @@ router.post("/:workspaceId/codes", async (req, res) => {
           codes: {
             title,
             code,
+            revision: 0,
             createdAt: new Date(),
             updatedAt: new Date(),
           },
@@ -342,7 +470,8 @@ router.post("/:workspaceId/codes", async (req, res) => {
       return res.status(404).json({ message: "Workspace not found" });
     }
 
-    res.json(workspace.codes);
+    const createdCode = workspace.codes[workspace.codes.length - 1];
+    res.status(201).json({ code: withNormalizedRevision(createdCode) });
   } catch (err) {
     console.error("Add code error:", err);
     res.status(500).json({ message: "Server error" });
@@ -351,37 +480,74 @@ router.post("/:workspaceId/codes", async (req, res) => {
 
 /**
  * UPDATE ONE code entry inside codes array
- * PUT /api/workspaces/:workspaceId/codes/:codeId
+ * PATCH /api/workspaces/:workspaceId/codes/:codeId
  */
-router.put("/:workspaceId/codes/:codeId", async (req, res) => {
+async function updateCodeEntry(req, res) {
   try {
-    const { title, code } = req.body;
+    const { title, code, revision } = req.body ?? {};
+    const expectedRevision = normalizeRevision(revision);
+
+    if (expectedRevision === null) {
+      return res.status(400).json({ message: "revision is required" });
+    }
+
+    const nextSet = {
+      "codes.$.updatedAt": new Date(),
+      "codes.$.revision": expectedRevision + 1,
+    };
+
+    if (typeof title === "string") {
+      nextSet["codes.$.title"] = title;
+    }
+
+    if (typeof code === "string") {
+      nextSet["codes.$.code"] = code;
+    }
 
     const workspace = await Workspace.findOneAndUpdate(
       {
         workspaceId: req.params.workspaceId,
-        "codes._id": req.params.codeId,
+        codes: {
+          $elemMatch: buildRevisionMatch(req.params.codeId, expectedRevision),
+        },
       },
       {
-        $set: {
-          "codes.$.title": title,
-          "codes.$.code": code,
-          "codes.$.updatedAt": new Date(),
-        },
+        $set: nextSet,
       },
       { new: true }
     );
 
     if (!workspace) {
-      return res.status(404).json({ message: "Code or workspace not found" });
+      const currentWorkspace = await Workspace.findOne(
+        {
+          workspaceId: req.params.workspaceId,
+          "codes._id": req.params.codeId,
+        },
+        { "codes.$": 1 }
+      );
+
+      if (!currentWorkspace?.codes?.length) {
+        return res.status(404).json({ message: "Code or workspace not found" });
+      }
+
+      return res.status(409).json({
+        message: "Code entry changed in another tab",
+        conflict: true,
+        code: withNormalizedRevision(currentWorkspace.codes[0]),
+      });
     }
 
-    res.json(workspace.codes);
+    res.json({
+      code: withNormalizedRevision(workspace.codes.id(req.params.codeId)),
+    });
   } catch (err) {
     console.error("Update code error:", err);
     res.status(500).json({ message: "Server error" });
   }
-});
+}
+
+router.patch("/:workspaceId/codes/:codeId", updateCodeEntry);
+router.put("/:workspaceId/codes/:codeId", updateCodeEntry);
 
 /**
  * DELETE ONE code entry
@@ -390,7 +556,10 @@ router.put("/:workspaceId/codes/:codeId", async (req, res) => {
 router.delete("/:workspaceId/codes/:codeId", async (req, res) => {
   try {
     const workspace = await Workspace.findOneAndUpdate(
-      { workspaceId: req.params.workspaceId },
+      {
+        workspaceId: req.params.workspaceId,
+        "codes._id": req.params.codeId,
+      },
       {
         $pull: {
           codes: { _id: req.params.codeId },
@@ -400,10 +569,10 @@ router.delete("/:workspaceId/codes/:codeId", async (req, res) => {
     );
 
     if (!workspace) {
-      return res.status(404).json({ message: "Workspace not found" });
+      return res.status(404).json({ message: "Code or workspace not found" });
     }
 
-    res.json(workspace.codes);
+    res.json({ deletedId: req.params.codeId });
   } catch (err) {
     console.error("Delete code error:", err);
     res.status(500).json({ message: "Server error" });
@@ -412,37 +581,99 @@ router.delete("/:workspaceId/codes/:codeId", async (req, res) => {
 
 /**
  * UPDATE ONE note inside notes array
- * PUT /api/workspaces/:workspaceId/notes/:noteId
+ * PATCH /api/workspaces/:workspaceId/notes/:noteId
  */
-router.put("/:workspaceId/notes/:noteId", async (req, res) => {
+async function updateNoteEntry(req, res) {
   try {
-    const { title, content } = req.body;
+    const { title, content, contentHtml, revision } = req.body ?? {};
+    const noteAppearance = normalizeNoteAppearance(req.body ?? {});
+    const expectedRevision = normalizeRevision(revision);
+
+    if (expectedRevision === null) {
+      return res.status(400).json({ message: "revision is required" });
+    }
+
+    const nextSet = {
+      "notes.$.updatedAt": new Date(),
+      "notes.$.revision": expectedRevision + 1,
+    };
+
+    if (typeof title === "string") {
+      nextSet["notes.$.title"] = title;
+    }
+
+    if (typeof content === "string") {
+      nextSet["notes.$.content"] = content;
+    }
+
+    if (typeof contentHtml === "string") {
+      nextSet["notes.$.contentHtml"] = contentHtml;
+    }
+
+    if (typeof noteAppearance.noteLanguage === "string") {
+      nextSet["notes.$.noteLanguage"] = noteAppearance.noteLanguage;
+    }
+
+    if (typeof noteAppearance.noteFontStyle === "string") {
+      nextSet["notes.$.noteFontStyle"] = noteAppearance.noteFontStyle;
+    }
+
+    if (typeof noteAppearance.noteColor === "string") {
+      nextSet["notes.$.noteColor"] = noteAppearance.noteColor;
+    }
+
+    if (typeof noteAppearance.noteTextSize === "string") {
+      nextSet["notes.$.noteTextSize"] = noteAppearance.noteTextSize;
+    }
+
+    if (typeof noteAppearance.noteRuledLines === "boolean") {
+      nextSet["notes.$.noteRuledLines"] = noteAppearance.noteRuledLines;
+    }
 
     const workspace = await Workspace.findOneAndUpdate(
       {
         workspaceId: req.params.workspaceId,
-        "notes._id": req.params.noteId,
+        notes: {
+          $elemMatch: buildRevisionMatch(req.params.noteId, expectedRevision),
+        },
       },
       {
-        $set: {
-          "notes.$.title": title,
-          "notes.$.content": content,
-          "notes.$.updatedAt": new Date(),
-        },
+        $set: nextSet,
       },
       { new: true }
     );
 
     if (!workspace) {
-      return res.status(404).json({ message: "Note or workspace not found" });
+      const currentWorkspace = await Workspace.findOne(
+        {
+          workspaceId: req.params.workspaceId,
+          "notes._id": req.params.noteId,
+        },
+        { "notes.$": 1 }
+      );
+
+      if (!currentWorkspace?.notes?.length) {
+        return res.status(404).json({ message: "Note or workspace not found" });
+      }
+
+      return res.status(409).json({
+        message: "Note changed in another tab",
+        conflict: true,
+        note: withNormalizedRevision(currentWorkspace.notes[0]),
+      });
     }
 
-    res.json(workspace.notes);
+    res.json({
+      note: withNormalizedRevision(workspace.notes.id(req.params.noteId)),
+    });
   } catch (err) {
     console.error("Update note error:", err);
     res.status(500).json({ message: "Server error" });
   }
-});
+}
+
+router.patch("/:workspaceId/notes/:noteId", updateNoteEntry);
+router.put("/:workspaceId/notes/:noteId", updateNoteEntry);
 
 /**
  * DELETE ONE note
@@ -451,7 +682,10 @@ router.put("/:workspaceId/notes/:noteId", async (req, res) => {
 router.delete("/:workspaceId/notes/:noteId", async (req, res) => {
   try {
     const workspace = await Workspace.findOneAndUpdate(
-      { workspaceId: req.params.workspaceId },
+      {
+        workspaceId: req.params.workspaceId,
+        "notes._id": req.params.noteId,
+      },
       {
         $pull: {
           notes: { _id: req.params.noteId },
@@ -461,10 +695,10 @@ router.delete("/:workspaceId/notes/:noteId", async (req, res) => {
     );
 
     if (!workspace) {
-      return res.status(404).json({ message: "Workspace not found" });
+      return res.status(404).json({ message: "Note or workspace not found" });
     }
 
-    res.json(workspace.notes);
+    res.json({ deletedId: req.params.noteId });
   } catch (err) {
     console.error("Delete note error:", err);
     res.status(500).json({ message: "Server error" });

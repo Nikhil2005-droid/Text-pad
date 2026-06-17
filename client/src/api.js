@@ -1,4 +1,7 @@
 const API = (import.meta.env.VITE_API_URL || "/api/workspaces").replace(/\/$/, "");
+const TRANSLITERATION_API = (
+  import.meta.env.VITE_TRANSLITERATION_API_URL || "/api/transliteration"
+).replace(/\/$/, "");
 
 function withWorkspaceToken(headers = {}, accessToken) {
   if (!accessToken) return headers;
@@ -14,6 +17,7 @@ async function parseApiResponse(res, fallbackMessage) {
     const error = new Error(data?.message || fallbackMessage);
     error.requiresPassword = Boolean(data?.requiresPassword);
     error.status = res.status;
+    error.payload = data;
     throw error;
   }
   return data;
@@ -51,12 +55,18 @@ export const createNoteAPI = (workspaceId, note = {}, accessToken) =>
     body: JSON.stringify({
       title: note.title ?? "New Note",
       content: note.content ?? "",
+      contentHtml: note.contentHtml ?? "",
+      noteLanguage: note.noteLanguage,
+      noteFontStyle: note.noteFontStyle,
+      noteColor: note.noteColor,
+      noteTextSize: note.noteTextSize,
+      noteRuledLines: note.noteRuledLines,
     }),
   }).then((res) => parseApiResponse(res, "Failed to create note"));
 
 export const updateNoteAPI = (workspaceId, noteId, data, accessToken) =>
   fetch(`${API}/${workspaceId}/notes/${noteId}`, {
-    method: "PUT",
+    method: "PATCH",
     headers: withWorkspaceToken(
       { "Content-Type": "application/json" },
       accessToken
@@ -85,7 +95,7 @@ export const createCodeAPI = (workspaceId, entry = {}, accessToken) =>
 
 export const updateCodeAPI = (workspaceId, codeId, data, accessToken) =>
   fetch(`${API}/${workspaceId}/codes/${codeId}`, {
-    method: "PUT",
+    method: "PATCH",
     headers: withWorkspaceToken(
       { "Content-Type": "application/json" },
       accessToken
@@ -104,3 +114,15 @@ export const deleteWorkspaceAPI = (workspaceId, accessToken) =>
     method: "DELETE",
     headers: withWorkspaceToken({}, accessToken),
   }).then((res) => parseApiResponse(res, "Failed to delete workspace"));
+
+export const getTransliterationStatusAPI = () =>
+  fetch(`${TRANSLITERATION_API}/status`).then((res) =>
+    parseApiResponse(res, "Failed to read transliteration status")
+  );
+
+export const transliterateTextAPI = ({ text, language }) =>
+  fetch(TRANSLITERATION_API, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, language }),
+  }).then((res) => parseApiResponse(res, "Failed to transliterate text"));
