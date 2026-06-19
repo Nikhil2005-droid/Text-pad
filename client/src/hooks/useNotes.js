@@ -26,6 +26,7 @@ import {
   createWorkspaceBroadcastChannel,
   createWorkspaceBroadcastEvent,
 } from "../utils/workspaceBroadcast.js";
+import { reportError } from "../utils/errorTracking.js";
 
 function getDefaultNoteRuledLines(workspaceOrValue) {
   if (typeof workspaceOrValue === "boolean") {
@@ -128,6 +129,7 @@ export function useNotes(workspace, workspaceAccessToken) {
   const defaultNoteRuledLines = getDefaultNoteRuledLines(workspace);
 
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(false);
+  const [workspaceLoadError, setWorkspaceLoadError] = useState("");
   const [toast, setToast] = useState(null);
 
   const [notes, setNotes] = useState([]);
@@ -525,6 +527,7 @@ export function useNotes(workspace, workspaceAccessToken) {
   useEffect(() => {
     if (!workspaceId) {
       setIsLoadingWorkspace(false);
+      setWorkspaceLoadError("");
       setToast(null);
       setNotes([]);
       clearActiveNoteDraft();
@@ -538,6 +541,7 @@ export function useNotes(workspace, workspaceAccessToken) {
     }
 
     setIsLoadingWorkspace(true);
+    setWorkspaceLoadError("");
     setToast(null);
     setPinnedNoteIds(loadPinned(pinnedNotesKey(workspaceId)));
     setPinnedCodeIds(loadPinned(pinnedCodesKey(workspaceId)));
@@ -545,8 +549,13 @@ export function useNotes(workspace, workspaceAccessToken) {
     let isActive = true;
 
     refreshWorkspaceFromServer()
-      .catch(() => {
+      .catch((error) => {
         if (!isActive) return;
+        setWorkspaceLoadError(error?.message || "Unable to load this workspace.");
+        void reportError(error, {
+          source: "workspace.load",
+          workspaceId,
+        });
         setNotes([]);
         setCodes([]);
         clearActiveNoteDraft();
@@ -1270,6 +1279,19 @@ export function useNotes(workspace, workspaceAccessToken) {
   return {
     workspaceDisplayName,
     isLoadingWorkspace,
+    workspaceLoadError,
+    retryWorkspaceLoad: () =>
+      refreshWorkspaceFromServer({ preserveSelection: true })
+        .then(() => {
+          setWorkspaceLoadError("");
+        })
+        .catch((error) => {
+          setWorkspaceLoadError(error?.message || "Unable to load this workspace.");
+          void reportError(error, {
+            source: "workspace.retry-load",
+            workspaceId,
+          });
+        }),
     toast,
     dismissToast,
     notes,

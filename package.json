@@ -8,13 +8,14 @@
     "node": "20.x"
   },
   "scripts": {
+    "root:install": "npm install --include=prod",
     "client:install": "npm --prefix client install --include=dev",
     "client:dev": "npm --prefix client run dev",
     "client:build": "npm --prefix client run build",
     "client:lint": "npm --prefix client run lint",
     "client:test": "npm --prefix client run test",
     "server:start": "node server/server.js",
-    "build": "npm run client:install && npm run client:build",
+    "build": "npm run root:install && npm run client:install && npm run client:build && node -e \"require('dotenv'); require('express'); require('mongoose'); console.log('server dependencies ready')\"",
     "start": "npm run server:start"
   },
   "dependencies": {

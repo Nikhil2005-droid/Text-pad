@@ -1,7 +1,13 @@
 const fs = require("fs");
 const path = require("path");
 // Always load the server-local .env, even when the process is started from the repo root.
-require("dotenv").config({ path: path.join(__dirname, ".env") });
+try {
+  require("dotenv").config({ path: path.join(__dirname, ".env") });
+} catch (error) {
+  if (error?.code !== "MODULE_NOT_FOUND") {
+    throw error;
+  }
+}
 const express = require("express");
 const cors = require("cors");
 
@@ -48,6 +54,38 @@ app.use(
     keyPrefix: "api",
   })
 );
+
+app.post("/api/client-errors", (req, res) => {
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const error = body.error && typeof body.error === "object" ? body.error : {};
+  const context =
+    body.context && typeof body.context === "object" ? body.context : {};
+  const report = {
+    occurredAt: body.occurredAt || new Date().toISOString(),
+    url: String(body.url || "").slice(0, 500),
+    userAgent: String(body.userAgent || "").slice(0, 500),
+    error: {
+      name: String(error.name || "Error").slice(0, 120),
+      message: String(error.message || "Unknown client error").slice(0, 1000),
+      stack: String(error.stack || "").slice(0, 6000),
+    },
+    context,
+  };
+
+  console.error("[client-error]", JSON.stringify(report));
+
+  if (process.env.CLIENT_ERROR_LOG_PATH) {
+    const logPath = path.resolve(process.env.CLIENT_ERROR_LOG_PATH);
+    fs.promises
+      .appendFile(logPath, `${JSON.stringify(report)}\n`, "utf8")
+      .catch((error) => {
+        console.error("[client-error-log-failed]", error);
+      });
+  }
+
+  res.status(202).json({ ok: true });
+});
+
 app.use("/api/transliteration", transliterationRoutes);
 app.use("/api/workspaces", workspaceRoutes);
 

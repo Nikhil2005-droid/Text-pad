@@ -314,6 +314,15 @@ a {
       0 12px 24px rgba(76, 58, 38, 0.08);
   }
 
+  .status-spinner {
+    width: 1.35rem;
+    height: 1.35rem;
+    border-radius: 999px;
+    border: 2px solid rgba(188, 116, 65, 0.2);
+    border-top-color: var(--tp-accent-strong);
+    animation: status-spin 780ms linear infinite;
+  }
+
   .textarea {
     @apply w-full border px-4 py-4 text-sm transition;
     border-radius: 1.5rem;
@@ -2613,6 +2622,12 @@ a {
   to {
     opacity: 1;
     transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes status-spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 

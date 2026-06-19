@@ -19,6 +19,7 @@ import {
   upsertRecentWorkspace,
   writeRecentWorkspaces,
 } from "../utils/recentWorkspaces.js";
+import { reportError } from "../utils/errorTracking.js";
 
 const WorkspaceContext = createContext(null);
 const PROTECTED_WORKSPACE_ID_KEY = "textpad.protectedWorkspaceId";
@@ -79,6 +80,7 @@ export function WorkspaceProvider({ children }) {
   const [workspaceOpenError, setWorkspaceOpenError] = useState(
     shouldPromptForProtectedWorkspace ? PROTECTED_WORKSPACE_PROMPT : ""
   );
+  const [isOpeningWorkspace, setIsOpeningWorkspace] = useState(false);
   const [recentWorkspaces, setRecentWorkspaces] = useState(() =>
     readRecentWorkspaces()
   );
@@ -299,6 +301,7 @@ export function WorkspaceProvider({ children }) {
       if (trimmed.length < 3) return null;
 
       setWorkspaceIdInput(trimmed);
+      setIsOpeningWorkspace(true);
 
       try {
         const data = await openWorkspaceAPI(
@@ -312,6 +315,11 @@ export function WorkspaceProvider({ children }) {
           rememberRecent: true,
         });
       } catch (error) {
+        void reportError(error, {
+          source: "workspace.open",
+          workspaceId: trimmed,
+          requiresPassword: Boolean(error?.requiresPassword),
+        });
         if (error?.requiresPassword) {
           setRequiresWorkspacePassword(true);
           setWorkspaceOpenError(
@@ -322,6 +330,8 @@ export function WorkspaceProvider({ children }) {
 
         setWorkspaceOpenError(error?.message || "Failed to open workspace");
         return null;
+      } finally {
+        setIsOpeningWorkspace(false);
       }
     },
     [
@@ -683,6 +693,7 @@ export function WorkspaceProvider({ children }) {
     setWorkspacePasswordInput: handleWorkspacePasswordInput,
     requiresWorkspacePassword,
     workspaceOpenError,
+    isOpeningWorkspace,
     recentWorkspaces,
     openWorkspace,
     openRecentWorkspace,

@@ -120,6 +120,7 @@ export default function WorkspaceGate({
   setWorkspacePassword,
   requiresWorkspacePassword,
   workspaceOpenError,
+  isOpeningWorkspace = false,
   recentWorkspaces = [],
   onOpen,
   onOpenRecent,
@@ -130,7 +131,9 @@ export default function WorkspaceGate({
   const trimmedId = workspaceId.trim();
   const isValid = trimmedId.length >= 3;
   const canSubmit =
-    isValid && (!requiresWorkspacePassword || workspacePassword.length > 0);
+    isValid &&
+    !isOpeningWorkspace &&
+    (!requiresWorkspacePassword || workspacePassword.length > 0);
 
   return (
     <div className="mx-auto grid w-full max-w-6xl items-start gap-5 lg:grid-cols-[minmax(0,1.1fr)_360px]">
@@ -158,10 +161,11 @@ export default function WorkspaceGate({
                 onChange={(event) => setWorkspaceId(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key !== "Enter") return;
-                  if (isValid) onOpen();
+                  if (canSubmit) onOpen();
                 }}
                 autoComplete="off"
                 className="input pr-12"
+                disabled={isOpeningWorkspace}
               />
               <button
                 type="button"
@@ -228,6 +232,7 @@ export default function WorkspaceGate({
                     }}
                     autoComplete="current-password"
                     className="input pr-12"
+                    disabled={isOpeningWorkspace}
                   />
                   <button
                     type="button"
@@ -284,6 +289,11 @@ export default function WorkspaceGate({
             {workspaceOpenError && isValid ? (
               <p className="text-sm text-rose-600">{workspaceOpenError}</p>
             ) : null}
+            {isOpeningWorkspace ? (
+              <p className="text-sm text-slate-500" role="status" aria-live="polite">
+                Opening workspace without clearing your entry...
+              </p>
+            ) : null}
 
             <div className="flex flex-wrap items-center gap-2 pt-1">
               <button
@@ -291,7 +301,9 @@ export default function WorkspaceGate({
                 onClick={onOpen}
                 disabled={!canSubmit}
               >
-                {requiresWorkspacePassword
+                {isOpeningWorkspace
+                  ? "Opening..."
+                  : requiresWorkspacePassword
                   ? "Unlock Workspace"
                   : "Open Workspace"}
               </button>
@@ -351,8 +363,8 @@ export default function WorkspaceGate({
                 <RecentStudioCard
                   key={studio.workspaceId}
                   studio={studio}
-                  onOpen={onOpenRecent}
-                  onRemove={onRemoveRecent}
+                  onOpen={isOpeningWorkspace ? undefined : onOpenRecent}
+                  onRemove={isOpeningWorkspace ? undefined : onRemoveRecent}
                 />
               ))}
             </div>

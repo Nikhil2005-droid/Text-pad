@@ -3,6 +3,7 @@ import WorkspaceGate from "../components/WorkspaceGate.jsx";
 import Sidebar from "../components/Sidebar.jsx";
 import NoteEditor from "../components/NoteEditor.jsx";
 import EditorFontSelect from "../components/EditorFontSelect.jsx";
+import StatusState from "../components/StatusState.jsx";
 import { useWorkspace } from "../hooks/useWorkspace";
 import { useNotes } from "../hooks/useNotes";
 import {
@@ -74,6 +75,9 @@ function CodeEditorPanel({
   onFinishSave,
   onCreateCode,
   codeSaveStatus,
+  isLoading,
+  errorMessage,
+  onRetry,
   codeIsDirty,
   lastCodeSavedAt,
   codeLines,
@@ -87,6 +91,32 @@ function CodeEditorPanel({
 }) {
   const isSaving = codeSaveStatus === "saving";
   const codeFontClassName = getCodeFontClassName(codeFontStyle);
+
+  if (isLoading) {
+    return (
+      <StatusState
+        tone="loading"
+        kicker="Code Studio"
+        title="Loading code entries"
+        description="Your snippets are being restored into the workspace."
+        className="h-full"
+      />
+    );
+  }
+
+  if (errorMessage) {
+    return (
+      <StatusState
+        tone="error"
+        kicker="Code Studio"
+        title="Code entries could not load"
+        description={errorMessage}
+        actionLabel="Try Again"
+        onAction={onRetry}
+        className="h-full"
+      />
+    );
+  }
 
   let statusLabel = "";
   if (codeSaveStatus === "saving") statusLabel = "Saving...";
@@ -206,6 +236,7 @@ export default function WorkspacePage() {
     setWorkspacePassword,
     requiresWorkspacePassword,
     workspaceOpenError,
+    isOpeningWorkspace,
     recentWorkspaces,
     openWorkspace,
     openRecentWorkspace,
@@ -447,6 +478,17 @@ export default function WorkspacePage() {
       : "border-[rgba(104,84,58,0.14)] bg-white/85 text-slate-700";
 
   const editorPanel =
+    notesState.workspaceLoadError ? (
+      <StatusState
+        tone="error"
+        kicker={viewMode === "code" ? "Code Studio" : "Note Studio"}
+        title="This workspace could not load"
+        description={notesState.workspaceLoadError}
+        actionLabel="Try Again"
+        onAction={notesState.retryWorkspaceLoad}
+        className="h-full"
+      />
+    ) :
     viewMode === "code" ? (
       <CodeEditorPanel
         activeCodeId={notesState.activeCodeId}
@@ -470,11 +512,16 @@ export default function WorkspacePage() {
           handlePreferenceChange("codeFontStyle", value)
         }
         isUpdatingCodeFont={savingPreferenceKey === "codeFontStyle"}
+        isLoading={notesState.isLoadingWorkspace}
+        errorMessage={notesState.workspaceLoadError}
+        onRetry={notesState.retryWorkspaceLoad}
       />
     ) : (
       <NoteEditor
         activeNoteId={notesState.activeNoteId}
         isLoadingNotes={notesState.isLoadingWorkspace}
+        loadError={notesState.workspaceLoadError}
+        onRetryLoad={notesState.retryWorkspaceLoad}
         hasNotes={notesState.notes.length > 0}
         title={notesState.noteTitle}
         content={notesState.noteContent}
@@ -513,6 +560,7 @@ export default function WorkspacePage() {
         setWorkspacePassword={setWorkspacePassword}
         requiresWorkspacePassword={requiresWorkspacePassword}
         workspaceOpenError={workspaceOpenError}
+        isOpeningWorkspace={isOpeningWorkspace}
         recentWorkspaces={recentWorkspaces}
         onOpen={openWorkspace}
         onOpenRecent={openRecentWorkspace}

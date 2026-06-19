@@ -35,6 +35,7 @@ import NoteEditorEmptyState from "./editor/ui/NoteEditorEmptyState.jsx";
 import NoteEditorHeader from "./editor/ui/NoteEditorHeader.jsx";
 import NoteStudioPanel from "./editor/ui/NoteStudioPanel.jsx";
 import NoteScriptKeyboard from "./NoteScriptKeyboard.jsx";
+import StatusState from "./StatusState.jsx";
 
 const SCRIPT_BOUNDARY_PATTERN = /^[,.;:!?()[\]{}'"-]$/;
 const ROMAN_LETTER_PATTERN = /^[A-Za-z]$/;
@@ -1806,9 +1807,13 @@ export default function NoteEditor({
 
   if (isLoadingNotes) {
     return (
-      <div className="panel-muted flex h-full items-center justify-center p-8 text-slate-500">
-        Loading notes...
-      </div>
+      <StatusState
+        tone="loading"
+        kicker="Note Studio"
+        title="Loading notes"
+        description="Your writing space is being restored into the editor."
+        className="h-full"
+      />
     );
   }
 

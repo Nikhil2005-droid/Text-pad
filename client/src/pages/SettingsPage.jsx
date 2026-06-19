@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useWorkspace } from "../hooks/useWorkspace";
+import StatusState from "../components/StatusState.jsx";
 
 function ToggleCard({
   title,
@@ -47,6 +49,7 @@ export default function SettingsPage() {
     updatePreferences,
     updateWorkspaceSecurity,
   } = useWorkspace();
+  const navigate = useNavigate();
   const [draftTitle, setDraftTitle] = useState("");
   const [draftWorkspaceId, setDraftWorkspaceId] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
@@ -88,6 +91,23 @@ export default function SettingsPage() {
     draftWorkspaceId.trim() !== (workspace?.workspaceId ?? "");
   const shouldShowPasswordForm =
     !isPasswordProtected || isChangingPassword || isRemovingPassword;
+
+  if (!workspace) {
+    return (
+      <div className="mx-auto w-full max-w-5xl">
+        <StatusState
+          tone="empty"
+          kicker="Settings"
+          title="Open a workspace before changing settings."
+          description="Workspace preferences, identity, and password protection are saved per workspace, so there is nothing to edit until one is open."
+          actionLabel="Open Workspace"
+          onAction={() => {
+            navigate("/");
+          }}
+        />
+      </div>
+    );
+  }
 
   const securityMessageClass =
     securityTone === "error"
